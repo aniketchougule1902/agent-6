@@ -122,14 +122,28 @@
 
 ### Validation
 
-- Baseline Actions run `35745161038` is green.
-- Code commits: `f8be4d6edc1ce07b4b7e954cb2e3a1082c509381` and `359e231661299f771a4a79c0dfc0b5a0e0e7c197`.
-- New-head CI is pending; do not claim this checkpoint green until it completes.
+- GitHub Actions run `35752599990` passed for `842fdf6f85e11342c5217d7c9d34c5e323db88b6`.
+
+## 2026-09-22 — LightGBM baseline + CI dependency repair
+
+### Completed
+
+- Added the leakage-conscious LightGBM TP-before-SL meta-label baseline with chronological validation, configurable embargo, deterministic parameters, and AUC/Brier/log-loss metrics.
+- Added tests for chronological split sizing, bounded probabilities, binary-target validation, and feature-schema rejection.
+- Diagnosed Actions run `35759002809`: Rust, generated TypeScript contracts, UI typecheck/build all passed; the Python research step failed because CI installed only Polars/Pytest while the new baseline imports NumPy, LightGBM, and scikit-learn.
+- Repaired CI to install the research package from `research/pyproject.toml` plus Pytest, making the declared research dependency set the single source of truth. Added pip dependency caching keyed by `research/pyproject.toml`.
+
+### Validation
+
+- Failed run `35759002809` isolated the failure to the research-test step; all preceding Rust/UI checks were green.
+- Fix commit: `9cf3a5ac30d47a71910cc0073df939c8fc1cc690`.
+- New-head CI is pending; do not claim the repair green until GitHub Actions completes.
 
 ### Current highest-priority gaps
 
-1. Invoke `append_bybit_message` from the production live websocket path only after the corresponding market-state payload is accepted; rejected stale/non-monotonic L50 messages must remain zero-write.
-2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
-3. Add Parquet/DuckDB typed persistence.
-4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Continue the remaining research/ML calibration and champion/challenger roadmap only after the replay path is trustworthy.
+1. Confirm CI green after the research dependency repair; fix any remaining failure before feature work.
+2. Invoke `append_bybit_message` from the production live websocket path only after the corresponding market-state payload is accepted; rejected stale/non-monotonic L50 messages must remain zero-write.
+3. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
+4. Add Parquet/DuckDB typed persistence.
+5. Drive the execution simulator from replay for end-to-end outcome evaluation.
+6. Continue calibration/NO_TRADE and champion/challenger work only after the replay path is trustworthy.
