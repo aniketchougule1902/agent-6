@@ -1,4 +1,7 @@
-use crate::replay::{MarketRecorder, NormalizedMarketEvent};
+use crate::{
+    bybit_record::normalize_message,
+    replay::{MarketRecorder, NormalizedMarketEvent},
+};
 use anyhow::{bail, Result};
 use std::collections::HashMap;
 use std::path::Path;
@@ -15,7 +18,7 @@ struct BookCursor {
 /// The gate deliberately mirrors the replay integrity contract at ingestion time:
 /// an L50 delta is never persisted before a snapshot, and stale/non-monotonic
 /// sequence/update IDs are rejected instead of poisoning a deterministic recording.
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct RecordingIntegrityGate {
     books: HashMap<String, BookCursor>,
 }
@@ -45,15 +48,9 @@ impl RecordingIntegrityGate {
             bail!("refusing to record {symbol} L50 delta before snapshot");
         }
         if *seq > 0 && cursor.last_seq > 0 && *seq <= cursor.last_seq {
-            bail!(
-                "refusing stale {symbol} L50 seq {seq} <= {}",
-                cursor.last_seq
-            );
+            bail!("refusing stale {symbol} L50 seq {seq} <= {}", cursor.last_seq);
         }
-        if *update_id > 0
-            && cursor.last_update_id > 0
-            && *update_id <= cursor.last_update_id
-        {
+        if *update_id > 0 && cursor.last_update_id > 0 && *update_id <= cursor.last_update_id {
             bail!(
                 "refusing stale {symbol} L50 update id {update_id} <= {}",
                 cursor.last_update_id
@@ -88,6 +85,28 @@ impl AcceptedMarketRecorder {
     pub fn append(&mut self, event: &NormalizedMarketEvent) -> Result<()> {
         self.gate.accept(event)?;
         self.recorder.append(event)
+    }
+
+    /// Normalize and admit one complete Bybit websocket payload as a batch.
+    ///
+    /// Validation runs against a cloned gate first, so if any event in the payload
+    /// violates feed integrity, none of that payload is written and the live gate
+    /// cursor is unchanged. This is especially important for batched exchange data.
+    pub fn append_bybit_message(&mut self, text: &str) -> Result<usize> {
+        let events = normalize_message(text);
+        if events.is_empty() {
+            return Ok(0);
+        }
+
+        let mut candidate_gate = self.gate.clone();
+        for event in &events {
+            candidate_gate.accept(event)?;
+        }
+        for event in &events {
+            self.recorder.append(event)?;
+        }
+        self.gate = candidate_gate;
+        Ok(events.len())
     }
 
     pub fn reset_symbol(&mut self, symbol: &str) {
@@ -143,5 +162,15 @@ mod tests {
         gate.accept(&book(51, 501, false)).unwrap();
         gate.accept(&book(1, 1, true)).unwrap();
         gate.accept(&book(2, 2, false)).unwrap();
+    }
+
+    #[test]
+    fn bybit_batch_admission_rejects_bad_delta_without_advancing_gate() {
+        let mut gate = RecordingIntegrityGate::default();
+        gate.accept(&book(10, 100, true)).unwrap();
+        let before = gate.clone();
+        assert!(gate.accept(&book(10, 101, false)).is_err());
+        let mut restored = before;
+        assert!(restored.accept(&book(11, 101, false)).is_ok());
     }
 }
