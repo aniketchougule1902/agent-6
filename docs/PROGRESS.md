@@ -133,7 +133,8 @@
 
 ### Validation
 
-- Engine commit `a390fd09cb6b5eea16cdf9e4e941294a5bda0cb1` and this UI/docs checkpoint must pass the complete CI pipeline before runtime controls are considered validated.
+- Engine commit `a390fd09cb6b5eea16cdf9e4e941294a5bda0cb1` and UI/docs commit `f7ae59078ba3435379baad7ca2131c24a9cbd279` passed GitHub Actions run `35715587022`.
+- Rust tests, generated Rust→TypeScript contracts, UI typecheck and UI production build all completed successfully.
 
 ### Next highest-impact work
 
