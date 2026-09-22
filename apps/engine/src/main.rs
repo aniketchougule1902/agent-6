@@ -4,6 +4,7 @@ mod config;
 mod journal;
 mod microstructure;
 mod replay;
+mod runtime;
 mod signal;
 mod state;
 mod types;
@@ -22,6 +23,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env()?;
+    runtime::init(&config)?;
     let state = AppState::new(config.clone())?;
 
     if let Err(error) = bybit::backfill(&state).await {
@@ -32,9 +34,11 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(signal::run_loop(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
+    let market = runtime::current();
     info!(
         addr = %config.http_addr,
-        symbol = %config.symbol,
+        symbol = %market.symbol,
+        timeframe = %market.timeframe,
         testnet = config.bybit_testnet,
         "Agent-6 local engine started"
     );
