@@ -1,0 +1,39 @@
+name: ci
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust tests and TS contract generation
+        run: cargo test --workspace
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install UI dependencies
+        working-directory: apps/ui
+        run: npm install
+
+      - name: Typecheck UI
+        working-directory: apps/ui
+        run: npm run typecheck
+
+      - name: Build UI
+        working-directory: apps/ui
+        run: npm run build

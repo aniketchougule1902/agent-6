@@ -1,0 +1,15 @@
+[project]
+name = "agent6-research"
+version = "0.1.0"
+description = "Offline research, evaluation, calibration, and champion/challenger promotion for Agent-6"
+requires-python = ">=3.12"
+dependencies = [
+  "numpy>=2.0",
+  "polars>=1.0",
+  "scikit-learn>=1.5",
+  "lightgbm>=4.0",
+  "optuna>=4.0"
+]
+
+[tool.ruff]
+line-length = 100

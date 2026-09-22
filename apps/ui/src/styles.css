@@ -1,0 +1,123 @@
+:root {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #e8edf7;
+  background: #07090d;
+  font-synthesis: none;
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: #07090d; }
+button { font: inherit; }
+
+.app-shell { width: min(1800px, 100%); margin: 0 auto; padding: 18px; }
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 4px 20px;
+}
+
+.brand { font-weight: 900; font-size: 24px; letter-spacing: 0.16em; }
+.subtitle, .eyebrow { color: #6f7d91; letter-spacing: 0.14em; font-size: 11px; font-weight: 800; }
+.header-actions, .ticker-row, .timeframes, .signal-header { display: flex; align-items: center; gap: 12px; }
+
+.status {
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  border: 1px solid #262e3a;
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 11px;
+  font-weight: 900;
+}
+.status span { width: 8px; height: 8px; border-radius: 50%; }
+.status.online span { background: #35d399; box-shadow: 0 0 12px #35d399; }
+.status.offline span { background: #ff5c75; }
+
+.button, .tf {
+  border: 1px solid #2b3442;
+  background: #10151e;
+  color: #aeb8c8;
+  border-radius: 8px;
+  padding: 9px 12px;
+  cursor: pointer;
+  font-weight: 800;
+}
+.button.enabled, .tf.active { background: #e8edf7; color: #071018; border-color: #e8edf7; }
+
+.ticker-row {
+  justify-content: space-between;
+  padding: 16px 0;
+  border-top: 1px solid #161d27;
+}
+.ticker { color: #8f9caf; font-weight: 800; margin-right: 14px; }
+.last-price { font-size: 26px; }
+
+.main-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(360px, 0.8fr);
+  gap: 14px;
+}
+.right-column { display: grid; gap: 14px; }
+.panel {
+  background: #0b0f16;
+  border: 1px solid #1c2430;
+  border-radius: 14px;
+  padding: 16px;
+}
+.chart-panel { min-height: 670px; display: flex; flex-direction: column; }
+.chart { flex: 1; min-height: 620px; }
+.attribution { color: #526075; font-size: 10px; padding: 8px 2px 0; }
+
+.signal-card h2 { margin: 6px 0 0; font-size: 21px; }
+.positive { color: #35d399; }
+.negative { color: #ff5c75; }
+.muted { color: #69778b; }
+
+.confidence { margin-left: auto; text-align: right; }
+.confidence strong { display: block; font-size: 28px; }
+.confidence span { color: #66758a; font-size: 10px; text-transform: uppercase; }
+
+.levels, .feature-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+  margin-top: 18px;
+}
+.feature-grid { grid-template-columns: repeat(3, 1fr); }
+.metric {
+  min-width: 0;
+  border: 1px solid #1a2330;
+  background: #0d121a;
+  border-radius: 9px;
+  padding: 10px;
+}
+.metric span { display: block; color: #69788d; font-size: 9px; font-weight: 900; letter-spacing: 0.1em; }
+.metric strong { display: block; margin-top: 5px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; }
+
+.reason-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 14px; }
+.reason-list span { color: #94a3b7; background: #111823; border-radius: 999px; padding: 6px 8px; font-size: 10px; }
+.invalidation { color: #ffb86b; font-size: 11px; margin-bottom: 0; }
+
+.event-panel { margin-top: 14px; }
+.events { margin-top: 10px; max-height: 250px; overflow: auto; }
+.event { display: grid; grid-template-columns: 100px 160px 1fr; gap: 12px; padding: 9px 0; border-bottom: 1px solid #151c26; font-size: 12px; }
+.event time { color: #65748a; }
+.event strong { color: #b8c4d6; }
+.event span { color: #8795aa; }
+
+.loading { min-height: 100vh; display: grid; place-content: center; text-align: center; background: #07090d; color: #e8edf7; }
+
+@media (max-width: 1050px) {
+  .main-grid { grid-template-columns: 1fr; }
+  .chart-panel { min-height: 520px; }
+  .chart { min-height: 470px; }
+}
+@media (max-width: 720px) {
+  header, .ticker-row { align-items: flex-start; flex-direction: column; }
+  .levels, .feature-grid { grid-template-columns: repeat(2, 1fr); }
+  .event { grid-template-columns: 80px 110px 1fr; }
+}
