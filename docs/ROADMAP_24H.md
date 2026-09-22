@@ -71,10 +71,10 @@ This is the working queue for the hourly build automation. Each run should inspe
 
 ## H14–H16 — Confidence and abstention
 
-- [ ] isotonic / Platt calibration
-- [ ] Brier score + ECE metrics
+- [x] isotonic / Platt calibration
+- [x] Brier score + ECE metrics
 - [ ] uncertainty/disagreement features
-- [ ] NO_TRADE threshold from validation
+- [x] NO_TRADE threshold from validation
 - [ ] confidence bucket report
 - [ ] probability drift monitor
 
