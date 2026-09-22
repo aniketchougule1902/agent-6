@@ -12,7 +12,7 @@ def test_bucket_report_accounts_for_every_observation():
     assert sum(bucket.count for bucket in report) == len(p)
     assert sum(bucket.coverage for bucket in report) == pytest.approx(1.0)
     assert report[-1].upper == 1.0
-    assert any(bucket.mean_probability == 0.995 for bucket in report)
+    assert any(bucket.mean_probability == pytest.approx(0.995) for bucket in report)
 
 
 def test_bucket_metrics_are_calculated_only_from_members():
