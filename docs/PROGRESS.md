@@ -83,13 +83,26 @@
 
 ### Validation
 
-- Baseline CI run `35725620584` was green before this checkpoint.
-- Code checkpoint: `b1aa1b672b4b6cc51b29bd5eeed6970dfd20b865`.
+- GitHub Actions run `35731508705` passed for `4ef05968e0b96c056339751fc68c72be169a1302`.
+
+## 2026-09-22 — Bybit typed-record normalization bridge
+
+### Completed
+
+- Added a dedicated Rust normalizer that maps Bybit V5 public websocket payloads into the existing strongly typed `NormalizedMarketEvent` schema.
+- Preserves exchange timestamps, exact L50 snapshot/delta update IDs and sequence IDs, including zero-size book levels required to replay deletions correctly.
+- Covers trade batches, ticker/derivatives updates, liquidations and klines while ignoring heartbeat/control payloads.
+- Added unit tests for exact book-delta preservation, batched trade timestamps and control-message rejection.
+
+### Validation
+
+- Baseline GitHub Actions run `35731508705` was green before this checkpoint.
+- Code commits: `e7ab9cca2e5efd128911a83bb6a1207d10eefc56` and `624efd32ecfa721fa53efa64821695c4b9859d0e`.
 - New-head GitHub Actions validation is pending; do not claim this checkpoint green until it completes.
 
 ### Current highest-priority gaps
 
-1. Wire every accepted normalized Bybit event into `MarketRecorder` rather than leaving recorder primitives detached from the live feed.
+1. Call the tested Bybit normalizer only after the live handler accepts a payload and append those events to `MarketRecorder`; rejected stale/non-monotonic L50 deltas must never enter the recording.
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
