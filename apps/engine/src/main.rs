@@ -2,6 +2,7 @@ mod api;
 mod bybit;
 mod config;
 mod journal;
+mod microstructure;
 mod signal;
 mod state;
 mod types;
