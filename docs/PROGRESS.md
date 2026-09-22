@@ -29,17 +29,34 @@
 - Added CI workflow for Rust and UI verification.
 - First full GitHub Actions run passed Rust tests, generated contracts, UI typecheck and UI build.
 
+## 2026-09-22 — Market microstructure checkpoint
+
+### Completed
+
+- Added a dedicated, strongly typed Rust `microstructure` module for depth dynamics.
+- Added normalized near-touch/deep-book slope calculation that is comparable across price levels.
+- Added update-to-update bid replenishment / ask depletion pressure calculation with bounded output.
+- Added unit tests for near-touch slope direction, bid-replenishment pressure, and empty-book neutrality.
+- Extended internal market state with bid/ask depth slope, previous-side depth, and depth-pressure fields so the exact L50 reconstruction can feed these metrics without changing the external API prematurely.
+
+### Validation
+
+- Previous `main` CI run `35700607804` passed the complete Rust + generated TypeScript + UI pipeline.
+- CI for the depth-dynamics checkpoint is running; do not mark the roadmap slope/depletion item complete until the calculations are wired into every L50 update and the run is green.
+
 ### Current limitations
 
-- Book depletion/replenishment, slope and queue dynamics are not yet modeled.
+- Depth dynamics primitives are implemented and tested but still need to be wired into the L50 recalculation path and exposed in `FeatureSnapshot` before they affect signal scoring.
+- Trade velocity/signed notional, large-trade detection, liquidation bursts and rolling OI windows remain incomplete.
+- Runtime symbol/timeframe switching remains incomplete.
 - The initial confidence number is a heuristic quality score and is intentionally marked uncalibrated.
 - The ML/replay/calibration/evolution pipeline is scaffolded but not yet complete.
 - No real-money order execution is enabled.
 
 ### Next highest-impact work
 
-1. Add depth slope, replenishment/depletion, trade velocity and liquidation-burst features.
-2. Add runtime symbol/timeframe controls.
-3. Implement typed recorder/replay.
-4. Build realistic execution/cost simulator.
-5. Build the calibrated meta-label research pipeline.
+1. Wire depth slope/replenishment/depletion into exact L50 updates, typed feature snapshots and bounded signal scoring; keep it neutral until sufficient live depth exists.
+2. Add trade velocity, signed notional, large-trade and liquidation-burst features.
+3. Add rolling OI delta windows.
+4. Add runtime symbol/timeframe controls.
+5. Implement typed recorder/replay.
