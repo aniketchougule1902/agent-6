@@ -68,7 +68,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [ ] CatBoost challenger baseline
 - [x] purged chronological splits
 - [ ] Optuna research-only tuning
-- [ ] model artifact manifest
+- [x] model artifact manifest
 
 ## H14–H16 — Confidence and abstention
 
