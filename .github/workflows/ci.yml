@@ -37,3 +37,15 @@ jobs:
       - name: Build UI
         working-directory: apps/ui
         run: npm run build
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install research test dependencies
+        run: python -m pip install "polars>=1.0" "pytest>=8.0"
+
+      - name: Test leakage-safe research features
+        working-directory: research
+        run: python -m pytest -q tests
