@@ -69,8 +69,23 @@
 ### Validation
 
 - Previous head Actions run `35765555560` is confirmed green.
-- New calibration commits: `4f5208aab534c587fc557bfb2a77e8986101db00`, `2e1e61065ef52c8a0b1a6c67e8e4f5c42845427a`.
-- New-head CI is pending; do not claim this checkpoint green until Actions completes.
+- Calibration commits: `4f5208aab534c587fc557bfb2a77e8986101db00`, `2e1e61065ef52c8a0b1a6c67e8e4f5c42845427a`.
+- Calibration head Actions run `35772137230` passed.
+
+## 2026-09-23 — Probability drift monitor checkpoint
+
+### Completed
+
+- Added deterministic probability Population Stability Index (PSI) against a frozen reference distribution using fixed [0,1] bins.
+- Added mean-confidence and NO_TRADE/abstention-rate shift guardrails with explicit thresholds.
+- Added strict finite/range validation and tests for stable windows, severe confidence drift and malformed inputs.
+- Monitoring is diagnostic only: it does not retrain, promote a model or enable trade execution.
+
+### Validation
+
+- Previous head Actions run `35772137230` is confirmed green.
+- Drift code commit: `1c2bde69918f8d0444192a57bac4e412aad5a657`; tests: `4fba44ca16b9e8c2c1a32f71b67e4f3a6173d159`.
+- New-head CI pending; do not claim this checkpoint green until Actions completes.
 
 ### Current highest-priority gaps
 
@@ -78,4 +93,4 @@
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add confidence-bucket/drift reporting, then champion/challenger registry and rollback.
+5. Add confidence-bucket reporting, then champion/challenger registry and rollback.
