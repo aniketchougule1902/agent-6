@@ -39,7 +39,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [ ] Raw normalized market-event recorder
 - [ ] Deterministic replay clock
 - [ ] Re-run live Rust feature/signal code against replay
-- [ ] MFE/MAE and time-to-target outcome labeling
+- [x] MFE/MAE and time-to-target outcome labeling
 
 ## H8–H10 — Realistic simulator
 
@@ -52,13 +52,13 @@ This is the working queue for the hourly build automation. Each run should inspe
 
 ## H10–H12 — Research feature factory
 
-- [ ] Polars training dataset builder
+- [x] Polars training dataset builder
 - [ ] regime labels
 - [ ] multi-timeframe features
-- [ ] microstructure features
+- [x] microstructure features
 - [ ] derivatives features
-- [ ] no-lookahead validation checks
-- [ ] feature-schema versioning
+- [x] no-lookahead validation checks
+- [x] feature-schema versioning
 
 ## H12–H14 — ML baseline
 
