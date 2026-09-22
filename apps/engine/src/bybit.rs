@@ -1,5 +1,6 @@
 use crate::{
-    state::{now_ms, AppState, FlowSample, InternalState},
+    microstructure::depth_dynamics,
+    state::{now_ms, AppState, FlowSample, InternalState, OiSample},
     types::{AlertKind, Candle, EngineEvent},
 };
 use anyhow::{Context, Result};
@@ -182,11 +183,15 @@ fn handle_message(state: &AppState, text: &str) {
         if let Some(data) = root.get("data").and_then(Value::as_array) {
             for trade in data {
                 let qty = trade.get("v").and_then(parse_f64).unwrap_or_default();
+                let price = trade.get("p").and_then(parse_f64).unwrap_or_default();
                 let sign = if trade.get("S").and_then(Value::as_str) == Some("Buy") { 1.0 } else { -1.0 };
-                inner.last_price = trade.get("p").and_then(parse_f64).or(inner.last_price);
+                if price > 0.0 {
+                    inner.last_price = Some(price);
+                }
                 inner.push_trade_flow(FlowSample {
                     ts_ms: trade.get("T").and_then(parse_u64).unwrap_or(now),
                     signed_qty: sign * qty,
+                    signed_notional: sign * qty * price,
                 });
             }
         }
@@ -201,6 +206,8 @@ fn handle_message(state: &AppState, text: &str) {
             if reset {
                 inner.orderbook_bids.clear();
                 inner.orderbook_asks.clear();
+                inner.previous_bid_depth = 0.0;
+                inner.previous_ask_depth = 0.0;
             } else if seq > 0 && inner.orderbook_seq > 0 && seq <= inner.orderbook_seq {
                 return;
             }
@@ -226,6 +233,7 @@ fn handle_message(state: &AppState, text: &str) {
                 if inner.open_interest != Some(oi) {
                     inner.previous_open_interest = inner.open_interest;
                     inner.open_interest = Some(oi);
+                    inner.push_oi_sample(OiSample { ts_ms: now, value: oi });
                 }
             }
             inner.funding_rate = data.get("fundingRate").and_then(parse_f64).or(inner.funding_rate);
@@ -234,10 +242,12 @@ fn handle_message(state: &AppState, text: &str) {
         if let Some(data) = root.get("data").and_then(Value::as_array) {
             for liq in data {
                 let qty = liq.get("v").and_then(parse_f64).unwrap_or_default();
+                let price = liq.get("p").and_then(parse_f64).unwrap_or_default();
                 let sign = if liq.get("S").and_then(Value::as_str) == Some("Buy") { -1.0 } else { 1.0 };
                 inner.push_liquidation_flow(FlowSample {
                     ts_ms: liq.get("T").and_then(parse_u64).unwrap_or(now),
                     signed_qty: sign * qty,
+                    signed_notional: sign * qty * price,
                 });
             }
         }
@@ -278,6 +288,18 @@ fn recalculate_book_metrics(inner: &mut InternalState) {
     let total_bid: f64 = bids.iter().map(|x| x.1).sum();
     let total_ask: f64 = asks.iter().map(|x| x.1).sum();
     inner.book_imbalance = imbalance(total_bid, total_ask);
+
+    let dynamics = depth_dynamics(
+        &bids,
+        &asks,
+        inner.previous_bid_depth,
+        inner.previous_ask_depth,
+    );
+    inner.bid_depth_slope = dynamics.bid_slope;
+    inner.ask_depth_slope = dynamics.ask_slope;
+    inner.depth_pressure = dynamics.pressure;
+    inner.previous_bid_depth = total_bid;
+    inner.previous_ask_depth = total_ask;
 
     let top5_bid: f64 = bids.iter().take(5).map(|x| x.1).sum();
     let top5_ask: f64 = asks.iter().take(5).map(|x| x.1).sum();

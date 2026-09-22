@@ -15,6 +15,13 @@ use tokio::sync::broadcast;
 pub(crate) struct FlowSample {
     pub ts_ms: u64,
     pub signed_qty: f64,
+    pub signed_notional: f64,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct OiSample {
+    pub ts_ms: u64,
+    pub value: f64,
 }
 
 #[derive(Debug)]
@@ -46,6 +53,7 @@ pub(crate) struct InternalState {
     pub bars: HashMap<String, VecDeque<Candle>>,
     pub trade_flow: VecDeque<FlowSample>,
     pub liquidation_flow: VecDeque<FlowSample>,
+    pub oi_samples: VecDeque<OiSample>,
     pub features: Option<FeatureSnapshot>,
     pub active_signal: Option<TradeSignal>,
     pub last_signal_at_ms: u64,
@@ -83,6 +91,7 @@ impl InternalState {
             bars: HashMap::new(),
             trade_flow: VecDeque::new(),
             liquidation_flow: VecDeque::new(),
+            oi_samples: VecDeque::new(),
             features: None,
             active_signal: None,
             last_signal_at_ms: 0,
@@ -116,14 +125,32 @@ impl InternalState {
         }
     }
 
+    pub fn push_oi_sample(&mut self, sample: OiSample) {
+        if self
+            .oi_samples
+            .back()
+            .is_some_and(|last| last.value == sample.value)
+        {
+            return;
+        }
+        self.oi_samples.push_back(sample);
+        while self.oi_samples.len() > 10_000 {
+            self.oi_samples.pop_front();
+        }
+    }
+
     pub fn prune_flows(&mut self, now: u64) {
         let min_trade_ts = now.saturating_sub(20_000);
         let min_liq_ts = now.saturating_sub(60_000);
+        let min_oi_ts = now.saturating_sub(600_000);
         while self.trade_flow.front().is_some_and(|x| x.ts_ms < min_trade_ts) {
             self.trade_flow.pop_front();
         }
         while self.liquidation_flow.front().is_some_and(|x| x.ts_ms < min_liq_ts) {
             self.liquidation_flow.pop_front();
+        }
+        while self.oi_samples.front().is_some_and(|x| x.ts_ms < min_oi_ts) {
+            self.oi_samples.pop_front();
         }
     }
 }

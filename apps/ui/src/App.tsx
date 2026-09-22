@@ -331,12 +331,18 @@ export default function App() {
               <Metric label="L50 IMB." value={f ? f.book_imbalance.toFixed(3) : "—"} />
               <Metric label="TOP5 IMB." value={f ? f.book_imbalance_top5.toFixed(3) : "—"} />
               <Metric label="MICROPRICE" value={f ? `${f.microprice_bps.toFixed(2)} bp` : "—"} />
+              <Metric label="DEPTH PRESS." value={f ? f.depth_pressure.toFixed(3) : "—"} />
               <Metric label="FLOW IMB." value={f ? f.trade_flow_imbalance.toFixed(3) : "—"} />
+              <Metric label="TRADES / SEC" value={f ? f.trade_velocity_5s.toFixed(1) : "—"} />
+              <Metric label="LARGE FLOW" value={f ? f.large_trade_imbalance.toFixed(3) : "—"} />
+              <Metric label="LIQ BURST" value={f ? f.liquidation_burst_5s.toFixed(3) : "—"} />
               <Metric label="15m TREND" value={f ? `${f.trend_15m_bps.toFixed(1)} bp` : "—"} />
               <Metric label="5m TREND" value={f ? `${f.trend_5m_bps.toFixed(1)} bp` : "—"} />
               <Metric label="VWAP20" value={f ? f.vwap_20.toFixed(2) : "—"} />
               <Metric label="ATR14" value={f ? f.atr_14.toFixed(2) : "—"} />
-              <Metric label="OI Δ" value={f ? `${f.open_interest_delta_pct.toFixed(3)}%` : "—"} />
+              <Metric label="OI TICK Δ" value={f ? `${f.open_interest_delta_pct.toFixed(3)}%` : "—"} />
+              <Metric label="OI 1m Δ" value={f ? `${f.open_interest_delta_1m_pct.toFixed(3)}%` : "—"} />
+              <Metric label="OI 5m Δ" value={f ? `${f.open_interest_delta_5m_pct.toFixed(3)}%` : "—"} />
               <Metric label="LIQ PRESS." value={f ? f.liquidation_pressure.toFixed(3) : "—"} />
               <Metric label="LONG SCORE" value={f ? `${(f.long_score * 100).toFixed(1)}%` : "—"} />
               <Metric label="SHORT SCORE" value={f ? `${(f.short_score * 100).toFixed(1)}%` : "—"} />

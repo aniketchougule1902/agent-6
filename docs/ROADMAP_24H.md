@@ -27,10 +27,10 @@ This is the working queue for the hourly build automation. Each run should inspe
 
 - [x] Correct L50 snapshot/delta local book reconstruction rather than message-only imbalance
 - [x] Add microprice and top-N imbalance
-- [ ] Add book slope, depletion and replenishment
-- [ ] Trade velocity, signed notional and large-trade detection
-- [ ] Liquidation burst features
-- [ ] Rolling OI delta windows
+- [x] Add book slope, depletion and replenishment
+- [x] Trade velocity, signed notional and large-trade detection
+- [x] Liquidation burst features
+- [x] Rolling OI delta windows
 - [ ] Runtime symbol/timeframe controls without restart
 
 ## H6–H8 — Persistence and replay

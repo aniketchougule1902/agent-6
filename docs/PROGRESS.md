@@ -60,3 +60,32 @@
 3. Add rolling OI delta windows.
 4. Add runtime symbol/timeframe controls.
 5. Implement typed recorder/replay.
+
+
+## 2026-09-22 — Live flow + derivatives depth checkpoint
+
+### Completed
+
+- Wired the tested depth-dynamics module into every accepted reconstructed L50 book update.
+- Snapshot/reset paths now clear prior-depth baselines so reconnects do not create synthetic replenishment spikes.
+- Exposed bid/ask depth slope and bounded replenishment/depletion pressure through the generated Rust→TypeScript feature contract.
+- Added 5-second trade velocity and signed quote-notional tracking from the public trade stream.
+- Added rolling large-trade imbalance using the current 5-second notional distribution rather than a fixed symbol-specific threshold.
+- Added signed liquidation-notional tracking and a 5-second liquidation-burst feature relative to the preceding 55-second local baseline.
+- Added a bounded rolling OI sample buffer plus 1-minute and 5-minute OI delta features.
+- Integrated depth pressure, large-trade flow, liquidation bursts and rolling OI confirmation into bounded live setup scoring.
+- Added dashboard metrics for depth pressure, trade velocity, large-flow imbalance, liquidation bursts and rolling OI deltas.
+- Added unit coverage for large-trade pressure, directional liquidation bursts and OI-window deltas.
+
+### Validation
+
+- Parent commit `b636d39d375618cbfdd0632337e68fb0f48c6afb` had green CI before this checkpoint.
+- New checkpoint CI must pass Rust tests, generated TypeScript contracts, UI typecheck and UI production build before this slice is considered validated.
+
+### Next highest-impact work
+
+1. Add runtime symbol/timeframe controls without process restart.
+2. Implement a normalized typed raw-market recorder and deterministic replay clock.
+3. Re-run the live Rust feature/signal path against replayed events.
+4. Add MFE/MAE and time-to-target outcome labels.
+5. Build the realistic fee/slippage/latency/fill simulator.

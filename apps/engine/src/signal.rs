@@ -5,7 +5,7 @@ use crate::{
         TradeSignal,
     },
 };
-use std::time::Duration;
+use std::{collections::VecDeque, time::Duration};
 use tokio::time;
 use uuid::Uuid;
 
@@ -116,11 +116,16 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     };
 
     let flow = normalized_flow(&s.trade_flow.iter().map(|x| x.signed_qty).collect::<Vec<_>>());
+    let trade_metrics = trade_flow_metrics(&s.trade_flow, now);
     let liq = normalized_flow(&s.liquidation_flow.iter().map(|x| x.signed_qty).collect::<Vec<_>>());
+    let liquidation_burst = liquidation_burst_5s(&s.liquidation_flow, now);
     let oi_delta_pct = match (s.previous_open_interest, s.open_interest) {
         (Some(prev), Some(current)) if prev.abs() > f64::EPSILON => (current - prev) / prev * 100.0,
         _ => 0.0,
     };
+
+    let oi_delta_1m_pct = oi_window_delta_pct(&s.oi_samples, now, 60_000);
+    let oi_delta_5m_pct = oi_window_delta_pct(&s.oi_samples, now, 300_000);
 
     let atr_bps = atr / price * 10_000.0;
     let regime = if atr_bps > 35.0 {
@@ -139,11 +144,16 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
         + signed_unit(momentum / 25.0) * 0.07
         + signed_unit(((price - vwap) / price * 10_000.0) / 12.0) * 0.07
         + s.book_imbalance.clamp(-1.0, 1.0) * 0.07
-        + s.book_imbalance_top5.clamp(-1.0, 1.0) * 0.08
-        + signed_unit(s.microprice_bps / 1.5) * 0.05
-        + flow * 0.14
-        + liq * 0.05
-        + signed_unit(oi_delta_pct / 0.08) * signed_unit(momentum / 20.0).abs() * 0.04;
+        + s.book_imbalance_top5.clamp(-1.0, 1.0) * 0.07
+        + signed_unit(s.microprice_bps / 1.5) * 0.04
+        + signed_unit((s.bid_depth_slope - s.ask_depth_slope) / 0.8) * 0.03
+        + s.depth_pressure.clamp(-1.0, 1.0) * 0.05
+        + flow * 0.11
+        + trade_metrics.large_trade_imbalance * 0.05
+        + liq * 0.03
+        + liquidation_burst * 0.04
+        + signed_unit(oi_delta_1m_pct / 0.08) * signed_unit(momentum / 20.0).abs() * 0.03
+        + signed_unit(oi_delta_5m_pct / 0.15) * signed_unit(trend_5m / 10.0).abs() * 0.02;
 
     let crowding_penalty = s
         .funding_rate
@@ -167,10 +177,19 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
         book_imbalance: s.book_imbalance,
         book_imbalance_top5: s.book_imbalance_top5,
         microprice_bps: s.microprice_bps,
+        bid_depth_slope: s.bid_depth_slope,
+        ask_depth_slope: s.ask_depth_slope,
+        depth_pressure: s.depth_pressure,
         trade_flow_imbalance: flow,
+        trade_velocity_5s: trade_metrics.velocity_per_sec,
+        signed_notional_5s: trade_metrics.signed_notional,
+        large_trade_imbalance: trade_metrics.large_trade_imbalance,
         liquidation_pressure: liq,
+        liquidation_burst_5s: liquidation_burst,
         open_interest: s.open_interest,
         open_interest_delta_pct: oi_delta_pct,
+        open_interest_delta_1m_pct: oi_delta_1m_pct,
+        open_interest_delta_5m_pct: oi_delta_5m_pct,
         funding_rate: s.funding_rate,
         regime,
         long_score,
@@ -221,7 +240,10 @@ fn build_signal(state: &AppState, f: &FeatureSnapshot, now: u64) -> Option<Trade
         format!("L50 imbalance {:.2}", f.book_imbalance),
         format!("top5 imbalance {:.2}", f.book_imbalance_top5),
         format!("microprice {:.2} bps", f.microprice_bps),
+        format!("depth pressure {:.2}", f.depth_pressure),
         format!("trade-flow imbalance {:.2}", f.trade_flow_imbalance),
+        format!("large-trade imbalance {:.2}", f.large_trade_imbalance),
+        format!("liquidation burst {:.2}", f.liquidation_burst_5s),
         format!("spread {:.2} bps", f.spread_bps),
     ];
     if f.open_interest_delta_pct.abs() > 0.01 {
@@ -366,6 +388,100 @@ fn ema(values: &[f64], period: usize) -> Option<f64> {
     Some(result)
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+struct TradeFlowMetrics {
+    velocity_per_sec: f64,
+    signed_notional: f64,
+    large_trade_imbalance: f64,
+}
+
+fn trade_flow_metrics(samples: &VecDeque<crate::state::FlowSample>, now: u64) -> TradeFlowMetrics {
+    let cutoff = now.saturating_sub(5_000);
+    let recent: Vec<_> = samples.iter().filter(|sample| sample.ts_ms >= cutoff).collect();
+    if recent.is_empty() {
+        return TradeFlowMetrics::default();
+    }
+
+    let signed_notional: f64 = recent.iter().map(|sample| sample.signed_notional).sum();
+    let mut notionals: Vec<f64> = recent
+        .iter()
+        .map(|sample| sample.signed_notional.abs())
+        .filter(|value| *value > 0.0)
+        .collect();
+    notionals.sort_by(|a, b| a.total_cmp(b));
+
+    let large_trade_imbalance = if notionals.len() >= 5 {
+        let threshold_index = ((notionals.len() - 1) * 9) / 10;
+        let threshold = notionals[threshold_index];
+        let mut signed = 0.0;
+        let mut absolute = 0.0;
+        for sample in &recent {
+            let notional = sample.signed_notional;
+            if notional.abs() >= threshold {
+                signed += notional;
+                absolute += notional.abs();
+            }
+        }
+        if absolute > f64::EPSILON {
+            (signed / absolute).clamp(-1.0, 1.0)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+
+    TradeFlowMetrics {
+        velocity_per_sec: recent.len() as f64 / 5.0,
+        signed_notional,
+        large_trade_imbalance,
+    }
+}
+
+fn liquidation_burst_5s(samples: &VecDeque<crate::state::FlowSample>, now: u64) -> f64 {
+    let recent_cutoff = now.saturating_sub(5_000);
+    let baseline_cutoff = now.saturating_sub(60_000);
+    let mut recent_signed = 0.0;
+    let mut recent_abs = 0.0;
+    let mut baseline_abs = 0.0;
+
+    for sample in samples.iter().filter(|sample| sample.ts_ms >= baseline_cutoff) {
+        let notional = sample.signed_notional;
+        if sample.ts_ms >= recent_cutoff {
+            recent_signed += notional;
+            recent_abs += notional.abs();
+        } else {
+            baseline_abs += notional.abs();
+        }
+    }
+
+    if recent_abs <= f64::EPSILON {
+        return 0.0;
+    }
+    let direction = (recent_signed / recent_abs).clamp(-1.0, 1.0);
+    let baseline_per_5s = baseline_abs / 11.0;
+    let intensity = if baseline_per_5s <= f64::EPSILON {
+        1.0
+    } else {
+        ((recent_abs / baseline_per_5s) - 1.0).max(0.0).tanh()
+    };
+    direction * intensity
+}
+
+fn oi_window_delta_pct(samples: &VecDeque<crate::state::OiSample>, now: u64, window_ms: u64) -> f64 {
+    let Some(current) = samples.back() else {
+        return 0.0;
+    };
+    let cutoff = now.saturating_sub(window_ms);
+    let Some(anchor) = samples.iter().find(|sample| sample.ts_ms >= cutoff) else {
+        return 0.0;
+    };
+    if anchor.value.abs() <= f64::EPSILON || current.ts_ms.saturating_sub(anchor.ts_ms) < window_ms / 3 {
+        return 0.0;
+    }
+    (current.value - anchor.value) / anchor.value * 100.0
+}
+
 fn normalized_flow(samples: &[f64]) -> f64 {
     let signed: f64 = samples.iter().sum();
     let absolute: f64 = samples.iter().map(|x| x.abs()).sum();
@@ -388,5 +504,53 @@ mod tests {
     fn normalized_flow_is_bounded() {
         assert_eq!(normalized_flow(&[1.0, 1.0, -1.0]), 1.0 / 3.0);
         assert_eq!(normalized_flow(&[]), 0.0);
+    }
+
+    #[test]
+    fn trade_metrics_detect_large_buy_pressure() {
+        let now = 10_000;
+        let mut samples = VecDeque::new();
+        for (offset, notional) in [100.0, 120.0, 130.0, 150.0, 200.0, 2_000.0].into_iter().enumerate() {
+            samples.push_back(crate::state::FlowSample {
+                ts_ms: now - offset as u64 * 200,
+                signed_qty: 1.0,
+                signed_notional: notional,
+            });
+        }
+        let metrics = trade_flow_metrics(&samples, now);
+        assert!(metrics.velocity_per_sec > 1.0);
+        assert!(metrics.signed_notional > 0.0);
+        assert!(metrics.large_trade_imbalance > 0.9);
+    }
+
+    #[test]
+    fn liquidation_burst_detects_directional_spike() {
+        let now = 60_000;
+        let mut samples = VecDeque::new();
+        for ts in (5_000..55_000).step_by(5_000) {
+            samples.push_back(crate::state::FlowSample {
+                ts_ms: ts,
+                signed_qty: 1.0,
+                signed_notional: 100.0,
+            });
+        }
+        samples.push_back(crate::state::FlowSample {
+            ts_ms: 59_000,
+            signed_qty: -1.0,
+            signed_notional: -5_000.0,
+        });
+        assert!(liquidation_burst_5s(&samples, now) < -0.9);
+    }
+
+    #[test]
+    fn oi_window_delta_requires_history_and_tracks_change() {
+        let now = 120_000;
+        let samples = VecDeque::from([
+            crate::state::OiSample { ts_ms: 60_000, value: 100.0 },
+            crate::state::OiSample { ts_ms: 90_000, value: 102.0 },
+            crate::state::OiSample { ts_ms: 120_000, value: 105.0 },
+        ]);
+        let delta = oi_window_delta_pct(&samples, now, 60_000);
+        assert!((delta - 5.0).abs() < 1e-9);
     }
 }
