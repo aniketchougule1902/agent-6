@@ -42,54 +42,23 @@
 ### Validation
 
 - Previous `main` CI run `35700607804` passed the complete Rust + generated TypeScript + UI pipeline.
-- CI for the depth-dynamics checkpoint is running; do not mark the roadmap slope/depletion item complete until the calculations are wired into every L50 update and the run is green.
-
-### Current limitations
-
-- Depth dynamics primitives are implemented and tested but still need to be wired into the L50 recalculation path and exposed in `FeatureSnapshot` before they affect signal scoring.
-- Trade velocity/signed notional, large-trade detection, liquidation bursts and rolling OI windows remain incomplete.
-- Runtime symbol/timeframe switching remains incomplete.
-- The initial confidence number is a heuristic quality score and is intentionally marked uncalibrated.
-- The ML/replay/calibration/evolution pipeline is scaffolded but not yet complete.
-- No real-money order execution is enabled.
-
-### Next highest-impact work
-
-1. Wire depth slope/replenishment/depletion into exact L50 updates, typed feature snapshots and bounded signal scoring; keep it neutral until sufficient live depth exists.
-2. Add trade velocity, signed notional, large-trade and liquidation-burst features.
-3. Add rolling OI delta windows.
-4. Add runtime symbol/timeframe controls.
-5. Implement typed recorder/replay.
-
 
 ## 2026-09-22 — Live flow + derivatives depth checkpoint
 
 ### Completed
 
 - Wired the tested depth-dynamics module into every accepted reconstructed L50 book update.
-- Snapshot/reset paths now clear prior-depth baselines so reconnects do not create synthetic replenishment spikes.
+- Snapshot/reset paths clear prior-depth baselines so reconnects do not create synthetic replenishment spikes.
 - Exposed bid/ask depth slope and bounded replenishment/depletion pressure through the generated Rust→TypeScript feature contract.
-- Added 5-second trade velocity and signed quote-notional tracking from the public trade stream.
-- Added rolling large-trade imbalance using the current 5-second notional distribution rather than a fixed symbol-specific threshold.
-- Added signed liquidation-notional tracking and a 5-second liquidation-burst feature relative to the preceding 55-second local baseline.
-- Added a bounded rolling OI sample buffer plus 1-minute and 5-minute OI delta features.
-- Integrated depth pressure, large-trade flow, liquidation bursts and rolling OI confirmation into bounded live setup scoring.
-- Added dashboard metrics for depth pressure, trade velocity, large-flow imbalance, liquidation bursts and rolling OI deltas.
+- Added 5-second trade velocity and signed quote-notional tracking, rolling large-trade imbalance, signed liquidation-notional tracking and a 5-second liquidation-burst feature.
+- Added bounded rolling OI sample buffers plus 1-minute and 5-minute OI delta features.
+- Integrated the new microstructure features into bounded live setup scoring and dashboard metrics.
 - Added unit coverage for large-trade pressure, directional liquidation bursts and OI-window deltas.
 
 ### Validation
 
-- Parent commit `b636d39d375618cbfdd0632337e68fb0f48c6afb` had green CI before this checkpoint.
 - GitHub Actions run `35708180105` passed for code commit `ea33824219564aad20b8c6dcecb56d5b33401d1e`.
 - Rust tests, Rust→TypeScript contract generation, UI typecheck, and UI production build all completed successfully.
-
-### Next highest-impact work
-
-1. Add runtime symbol/timeframe controls without process restart.
-2. Implement a normalized typed raw-market recorder and deterministic replay clock.
-3. Re-run the live Rust feature/signal path against replayed events.
-4. Add MFE/MAE and time-to-target outcome labels.
-5. Build the realistic fee/slippage/latency/fill simulator.
 
 ## 2026-09-22 — Typed recorder/replay foundation
 
@@ -104,21 +73,43 @@
 
 ### Validation
 
-- `main` was green before this checkpoint (run `35708319469`).
-- CI run `35708601962` validates the compiled replay module; its final status must be checked before claiming this checkpoint green.
+- The recorder/replay foundation subsequently passed on `main` in GitHub Actions run `35708641653`.
 
 ### Current limitations
 
-- Runtime symbol/timeframe switching is still the highest-priority incomplete H4–H6 item.
-- The recorder primitives are not yet wired to every live normalized Bybit event, so the roadmap raw-recorder item remains open.
-- Replay does not yet feed the exact live state/feature/signal path, so deterministic replay is foundation-only rather than end-to-end complete.
+- Recorder primitives are not yet wired to every accepted live normalized Bybit event.
+- Replay does not yet feed the exact live state/feature/signal path.
 - Parquet/DuckDB persistence and MFE/MAE outcome labeling remain incomplete.
+
+## 2026-09-22 — Execution simulator + runtime-control foundation
+
+### Completed
+
+- Added validated, strongly typed runtime market configuration primitives for symbol/timeframe changes, including a monotonically increasing generation for safe reconnect coordination.
+- Runtime values reject malformed symbols and unsupported timeframes before they can reach a market subscription.
+- Added a strongly typed deterministic execution simulator with explicit maker/taker fee schedules.
+- Added spread-aware and square-root book-impact slippage, separate decision/order latency, touch-liquidity capacity, maker queue-ahead approximation and partial fills.
+- Stop simulations can use a worse gap-price baseline instead of assuming a fill at the stop trigger.
+- Added deterministic seeded stress configurations that increase latency/slippage and reduce fill capacity reproducibly.
+- Added unit coverage for fees/slippage/latency/partial fills, stop gaps, maker queue effects and reproducible stress scenarios.
+- Preserved the analysis/paper-only boundary; no autonomous real-money execution path was added.
+
+### Validation
+
+- The previous `main` head was green in GitHub Actions run `35708641653` before this checkpoint.
+- GitHub Actions run `35714388993` is validating compiled runtime-control and simulator modules; do not claim this checkpoint green until it completes.
+
+### Current limitations
+
+- Runtime control primitives are initialized and typed but are not yet exposed through the local API/dashboard or wired to force a clean Bybit resubscription/state reset; the roadmap runtime-control box therefore remains open.
+- The simulator is a tested execution-model primitive but is not yet driven by deterministic replay/trade outcome evaluation; simulator roadmap boxes remain open until that integration exists.
+- Raw recorder wiring and end-to-end replay remain higher priority than research/ML work.
 - Real-money autonomous execution remains disabled.
 
 ### Next highest-impact work
 
-1. Add runtime symbol/timeframe controls without process restart.
-2. Wire `NormalizedMarketEvent` recording into all accepted live Bybit event paths.
-3. Feed deterministic replay through the same Rust market-state/feature/signal path used live.
-4. Add typed Parquet/DuckDB persistence and MFE/MAE/time-to-target labels.
-5. Build the realistic fee/slippage/latency/fill simulator.
+1. Finish runtime symbol/timeframe controls end-to-end: local API, dashboard control, clean feed resubscription and market-state reset.
+2. Wire every accepted normalized Bybit event into the typed recorder.
+3. Feed deterministic replay through the exact production Rust state/feature/signal path.
+4. Drive the execution simulator from replay and add MFE/MAE/time-to-target labels.
+5. Add Parquet/DuckDB persistence and the no-lookahead research feature factory.
