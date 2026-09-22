@@ -56,15 +56,15 @@ pub fn current() -> RuntimeMarketConfig {
 
 pub fn update(request: RuntimeMarketUpdate) -> Result<RuntimeMarketConfig> {
     let runtime = RUNTIME.get().expect("runtime market configuration not initialized");
-    let current = current();
+    let previous = current();
     let symbol = request
         .symbol
         .map(|value| value.trim().to_ascii_uppercase())
-        .unwrap_or(current.symbol);
+        .unwrap_or(previous.symbol);
     let timeframe = request
         .timeframe
         .map(|value| value.trim().to_string())
-        .unwrap_or(current.timeframe);
+        .unwrap_or(previous.timeframe);
 
     validate_symbol(&symbol)?;
     validate_timeframe(&timeframe)?;
