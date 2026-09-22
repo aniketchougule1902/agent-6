@@ -66,7 +66,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [x] TP-before-SL label
 - [x] time-to-event labels
 - [ ] CatBoost challenger baseline
-- [ ] purged chronological splits
+- [x] purged chronological splits
 - [ ] Optuna research-only tuning
 - [ ] model artifact manifest
 
