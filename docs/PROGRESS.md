@@ -80,7 +80,8 @@
 ### Validation
 
 - Parent commit `b636d39d375618cbfdd0632337e68fb0f48c6afb` had green CI before this checkpoint.
-- New checkpoint CI must pass Rust tests, generated TypeScript contracts, UI typecheck and UI production build before this slice is considered validated.
+- GitHub Actions run `35708180105` passed for code commit `ea33824219564aad20b8c6dcecb56d5b33401d1e`.
+- Rust tests, Rust→TypeScript contract generation, UI typecheck, and UI production build all completed successfully.
 
 ### Next highest-impact work
 
