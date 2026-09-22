@@ -101,6 +101,21 @@
 
 - Previous head Actions run `35778894627` is confirmed green.
 - Confidence code commit: `bb81a6e9513db9941bb2f462d52802db1c305db4`; tests/follow-up: `df91ce46b60b29aef20e219e990e9cd78446e401`, `4c434b789a279f8c8762aedc0a5d841a725e739c`.
+- Confidence head Actions run `35785267026` passed.
+
+## 2026-09-23 — Purged chronological split checkpoint
+
+### Completed
+
+- Added outcome-horizon-aware purged chronological train/validation splitting for research.
+- Training observations whose `label_end_ms` overlaps the validation era are removed before fitting; an optional row embargo excludes the immediate boundary as a second leakage guard.
+- Added strict checks for monotonic event time, impossible label horizons, malformed arrays, and the fail-closed case where purge/embargo removes all training data.
+- Added tests proving overlap purge and embargo behavior and marked the roadmap item complete.
+
+### Validation
+
+- Previous head Actions run `35785267026` is confirmed green.
+- Code commit: `0ff3139620fe282b47f0146fbfc0f522bf562471`; tests: `37f69b7e1d514aa3d25bfe70d5853353cec47845`.
 - New-head CI pending; do not claim this checkpoint green until Actions completes.
 
 ### Current highest-priority gaps
@@ -109,4 +124,4 @@
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add CatBoost/purged-split/model-manifest work, then champion/challenger registry and rollback.
+5. Add CatBoost/model-manifest work, then champion/challenger registry and rollback.
