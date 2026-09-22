@@ -3,6 +3,7 @@ mod bybit;
 mod config;
 mod journal;
 mod microstructure;
+mod outcomes;
 mod replay;
 mod runtime;
 mod signal;
