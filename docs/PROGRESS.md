@@ -116,6 +116,21 @@
 
 - Previous head Actions run `35785267026` is confirmed green.
 - Code commit: `0ff3139620fe282b47f0146fbfc0f522bf562471`; tests: `37f69b7e1d514aa3d25bfe70d5853353cec47845`.
+- Actions run `35791057802` passed for `d82a154934b0d0c3586faf0031e3e8335451ef19`.
+
+## 2026-09-23 — Model artifact integrity checkpoint
+
+### Completed
+
+- Added deterministic content-addressed `ModelArtifactManifest` metadata for offline challenger artifacts, including model family, feature schema, training-data identity, code revision, metrics and parameters.
+- Added SHA-256 hashing of candidate bytes plus canonical manifest hashing and fail-closed artifact verification so tampered model bytes cannot silently match a recorded candidate.
+- Added strict validation for required provenance fields and finite metrics, with tests for deterministic manifests, successful verification and tamper rejection.
+- This is research-only metadata; it does not promote a model or enable real-money execution.
+
+### Validation
+
+- Previous head Actions run `35791057802` is confirmed green.
+- Artifact code commit: `13080c632982f8180b49947e3e23ff14d44a4829`; tests: `626af434b8ad0f33be27408de56e73d16eef969c`.
 - New-head CI pending; do not claim this checkpoint green until Actions completes.
 
 ### Current highest-priority gaps
@@ -124,4 +139,4 @@
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add CatBoost/model-manifest work, then champion/challenger registry and rollback.
+5. Add CatBoost challenger work, then champion/challenger registry and rollback.
