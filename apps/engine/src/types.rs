@@ -133,6 +133,8 @@ pub struct EngineEvent {
 #[ts(export)]
 pub struct EngineSnapshot {
     pub symbol: String,
+    pub timeframe: String,
+    pub market_generation: u64,
     pub connected: bool,
     pub feed_stale: bool,
     pub feed_age_ms: u64,

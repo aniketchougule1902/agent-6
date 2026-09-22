@@ -11,7 +11,7 @@ mod state;
 mod types;
 
 use crate::{config::Config, state::AppState};
-use tracing::{error, info};
+use tracing::info;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -26,10 +26,6 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     runtime::init(&config)?;
     let state = AppState::new(config.clone())?;
-
-    if let Err(error) = bybit::backfill(&state).await {
-        error!(?error, "historical backfill failed; live feed will still start");
-    }
 
     tokio::spawn(bybit::run_forever(state.clone()));
     tokio::spawn(signal::run_loop(state.clone()));

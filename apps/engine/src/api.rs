@@ -1,9 +1,13 @@
-use crate::state::AppState;
+use crate::{
+    runtime::{self, RuntimeMarketConfig, RuntimeMarketUpdate},
+    state::AppState,
+};
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         State,
     },
+    http::StatusCode,
     response::IntoResponse,
     routing::get,
     Json, Router,
@@ -17,6 +21,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/api/health", get(health))
         .route("/api/state", get(snapshot))
+        .route("/api/market", get(market_config).post(update_market))
         .route("/ws", get(ws_upgrade))
         .layer(CorsLayer::permissive())
         .with_state(state)
@@ -34,6 +39,42 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
 
 async fn snapshot(State(state): State<AppState>) -> Json<crate::types::EngineSnapshot> {
     Json(state.snapshot())
+}
+
+async fn market_config() -> Json<RuntimeMarketConfig> {
+    Json(runtime::current())
+}
+
+async fn update_market(
+    State(state): State<AppState>,
+    Json(request): Json<RuntimeMarketUpdate>,
+) -> Result<Json<RuntimeMarketConfig>, (StatusCode, Json<serde_json::Value>)> {
+    let previous = runtime::current();
+    let next = runtime::update(request).map_err(|error| {
+        (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error": error.to_string()})),
+        )
+    })?;
+
+    if next.symbol != previous.symbol {
+        state.inner.write().reset_market();
+    } else if next.timeframe != previous.timeframe {
+        state.inner.write().reset_signal_context();
+    }
+
+    state.publish(crate::types::EngineEvent {
+        ts_ms: crate::state::now_ms(),
+        event_type: "market_update_requested".into(),
+        alert: None,
+        message: format!(
+            "Requested {} on {}m (generation {}).",
+            next.symbol, next.timeframe, next.generation
+        ),
+        signal: None,
+    });
+
+    Ok(Json(next))
 }
 
 async fn ws_upgrade(

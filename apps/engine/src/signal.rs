@@ -1,4 +1,5 @@
 use crate::{
+    runtime,
     state::{now_ms, AppState, InternalState},
     types::{
         AlertKind, Candle, EngineEvent, FeatureSnapshot, MarketRegime, Side, SignalStatus,
@@ -250,10 +251,11 @@ fn build_signal(state: &AppState, f: &FeatureSnapshot, now: u64) -> Option<Trade
         reasons.push(format!("OI delta {:.3}%", f.open_interest_delta_pct));
     }
 
+    let market = runtime::current();
     Some(TradeSignal {
         id: Uuid::new_v4().to_string(),
-        symbol: state.config.symbol.clone(),
-        timeframe: state.config.timeframe.clone(),
+        symbol: market.symbol,
+        timeframe: market.timeframe,
         side,
         status: SignalStatus::Active,
         created_at_ms: now,

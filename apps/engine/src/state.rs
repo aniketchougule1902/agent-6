@@ -1,6 +1,7 @@
 use crate::{
     config::Config,
     journal::Journal,
+    runtime,
     types::{Candle, EngineEvent, EngineSnapshot, FeatureSnapshot, TradeSignal},
 };
 use parking_lot::RwLock;
@@ -139,6 +140,49 @@ impl InternalState {
         }
     }
 
+    pub fn reset_market(&mut self) {
+        let now = now_ms();
+        self.connected = false;
+        self.feed_stale = true;
+        self.last_market_event_ms = now;
+        self.last_price = None;
+        self.mark_price = None;
+        self.index_price = None;
+        self.bid = None;
+        self.ask = None;
+        self.book_imbalance = 0.0;
+        self.book_imbalance_top5 = 0.0;
+        self.microprice_bps = 0.0;
+        self.bid_depth_slope = 0.0;
+        self.ask_depth_slope = 0.0;
+        self.depth_pressure = 0.0;
+        self.previous_bid_depth = 0.0;
+        self.previous_ask_depth = 0.0;
+        self.orderbook_bids.clear();
+        self.orderbook_asks.clear();
+        self.orderbook_update_id = 0;
+        self.orderbook_seq = 0;
+        self.orderbook_event_ms = 0;
+        self.open_interest = None;
+        self.previous_open_interest = None;
+        self.funding_rate = None;
+        self.bars.clear();
+        self.trade_flow.clear();
+        self.liquidation_flow.clear();
+        self.oi_samples.clear();
+        self.features = None;
+        self.active_signal = None;
+        self.last_signal_at_ms = 0;
+        self.updated_at_ms = now;
+    }
+
+    pub fn reset_signal_context(&mut self) {
+        self.features = None;
+        self.active_signal = None;
+        self.last_signal_at_ms = 0;
+        self.updated_at_ms = now_ms();
+    }
+
     pub fn prune_flows(&mut self, now: u64) {
         let min_trade_ts = now.saturating_sub(20_000);
         let min_liq_ts = now.saturating_sub(60_000);
@@ -192,8 +236,11 @@ impl AppState {
                 .unwrap_or_default()
         };
         let now = now_ms();
+        let market = runtime::current();
         EngineSnapshot {
-            symbol: self.config.symbol.clone(),
+            symbol: market.symbol,
+            timeframe: market.timeframe,
+            market_generation: market.generation,
             connected: s.connected,
             feed_stale: s.feed_stale,
             feed_age_ms: now.saturating_sub(s.last_market_event_ms),

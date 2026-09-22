@@ -1,5 +1,6 @@
 use crate::{
     microstructure::depth_dynamics,
+    runtime::{self, RuntimeMarketConfig},
     state::{now_ms, AppState, FlowSample, InternalState, OiSample},
     types::{AlertKind, Candle, EngineEvent},
 };
@@ -11,7 +12,7 @@ use tokio::time;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{info, warn};
 
-pub async fn backfill(state: &AppState) -> Result<()> {
+pub async fn backfill(state: &AppState, symbol: &str) -> Result<()> {
     let client = reqwest::Client::new();
     for interval in ["1", "3", "5", "15"] {
         let url = format!("{}/v5/market/kline", state.config.rest_base_url());
@@ -19,7 +20,7 @@ pub async fn backfill(state: &AppState) -> Result<()> {
             .get(&url)
             .query(&[
                 ("category", "linear"),
-                ("symbol", state.config.symbol.as_str()),
+                ("symbol", symbol),
                 ("interval", interval),
                 ("limit", "500"),
             ])
@@ -59,14 +60,47 @@ pub async fn backfill(state: &AppState) -> Result<()> {
             inner.upsert_candle(candle);
         }
     }
-    info!("historical backfill complete");
+    info!(symbol, "historical backfill complete");
     Ok(())
 }
 
+enum SessionEnd {
+    Reconfigure,
+    Disconnected,
+}
+
 pub async fn run_forever(state: AppState) {
+    let mut market_changes = runtime::subscribe();
+    let mut loaded_symbol = String::new();
+
     loop {
-        match run_session(&state).await {
-            Ok(()) => warn!("Bybit stream ended; reconnecting"),
+        let market = market_changes.borrow().clone();
+
+        if loaded_symbol != market.symbol {
+            state.inner.write().reset_market();
+            if let Err(error) = backfill(&state, &market.symbol).await {
+                warn!(?error, symbol = %market.symbol, "historical backfill failed; live feed will still start");
+            }
+            loaded_symbol = market.symbol.clone();
+        }
+
+        match run_session(&state, &market, &mut market_changes).await {
+            Ok(SessionEnd::Reconfigure) => {
+                let next = market_changes.borrow().clone();
+                state.inner.write().reset_market();
+                state.publish(EngineEvent {
+                    ts_ms: now_ms(),
+                    event_type: "market_reconfigured".into(),
+                    alert: None,
+                    message: format!(
+                        "Market switched from {} to {}; rebuilding local state.",
+                        market.symbol, next.symbol
+                    ),
+                    signal: None,
+                });
+                continue;
+            }
+            Ok(SessionEnd::Disconnected) => warn!("Bybit stream ended; reconnecting"),
             Err(error) => warn!(?error, "Bybit stream error; reconnecting"),
         }
 
@@ -87,11 +121,15 @@ pub async fn run_forever(state: AppState) {
     }
 }
 
-async fn run_session(state: &AppState) -> Result<()> {
+async fn run_session(
+    state: &AppState,
+    market: &RuntimeMarketConfig,
+    market_changes: &mut tokio::sync::watch::Receiver<RuntimeMarketConfig>,
+) -> Result<SessionEnd> {
     let (stream, _) = connect_async(state.config.public_ws_url()).await?;
     let (mut write, mut read) = stream.split();
 
-    let symbol = &state.config.symbol;
+    let symbol = &market.symbol;
     let args = vec![
         format!("kline.1.{symbol}"),
         format!("kline.3.{symbol}"),
@@ -125,7 +163,7 @@ async fn run_session(state: &AppState) -> Result<()> {
         signal: None,
     });
 
-    info!(symbol = %state.config.symbol, "Bybit live feed connected");
+    info!(symbol = %market.symbol, generation = market.generation, "Bybit live feed connected");
     let mut heartbeat = time::interval(Duration::from_secs(20));
 
     loop {
@@ -133,18 +171,35 @@ async fn run_session(state: &AppState) -> Result<()> {
             _ = heartbeat.tick() => {
                 write.send(Message::Text(json!({"op":"ping"}).to_string().into())).await?;
             }
+            changed = market_changes.changed() => {
+                changed.context("runtime market configuration channel closed")?;
+                let next = market_changes.borrow().clone();
+                if next.symbol != market.symbol {
+                    return Ok(SessionEnd::Reconfigure);
+                }
+                state.inner.write().reset_signal_context();
+                state.publish(EngineEvent {
+                    ts_ms: now_ms(),
+                    event_type: "timeframe_changed".into(),
+                    alert: None,
+                    message: format!("Analysis timeframe changed to {}m.", next.timeframe),
+                    signal: None,
+                });
+            }
             maybe_message = read.next() => {
-                let message = maybe_message.context("Bybit websocket closed")??;
+                let Some(message) = maybe_message else {
+                    return Ok(SessionEnd::Disconnected);
+                };
+                let message = message?;
                 match message {
                     Message::Text(text) => handle_message(state, &text),
                     Message::Ping(payload) => write.send(Message::Pong(payload)).await?,
-                    Message::Close(_) => break,
+                    Message::Close(_) => return Ok(SessionEnd::Disconnected),
                     _ => {}
                 }
             }
         }
     }
-    Ok(())
 }
 
 fn handle_message(state: &AppState, text: &str) {

@@ -2,10 +2,8 @@ use crate::config::Config;
 use anyhow::{bail, Result};
 use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
-use std::sync::{
-    atomic::{AtomicU64, Ordering},
-    OnceLock,
-};
+use std::sync::OnceLock;
+use tokio::sync::watch;
 use ts_rs::TS;
 
 const ALLOWED_TIMEFRAMES: &[&str] = &["1", "3", "5", "15"];
@@ -18,7 +16,7 @@ pub struct RuntimeMarketConfig {
     pub generation: u64,
 }
 
-#[derive(Debug, Clone, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
 pub struct RuntimeMarketUpdate {
     pub symbol: Option<String>,
@@ -26,9 +24,8 @@ pub struct RuntimeMarketUpdate {
 }
 
 struct RuntimeMarket {
-    symbol: RwLock<String>,
-    timeframe: RwLock<String>,
-    generation: AtomicU64,
+    config: RwLock<RuntimeMarketConfig>,
+    changes: watch::Sender<RuntimeMarketConfig>,
 }
 
 static RUNTIME: OnceLock<RuntimeMarket> = OnceLock::new();
@@ -36,46 +33,67 @@ static RUNTIME: OnceLock<RuntimeMarket> = OnceLock::new();
 pub fn init(config: &Config) -> Result<()> {
     validate_symbol(&config.symbol)?;
     validate_timeframe(&config.timeframe)?;
+    let initial = RuntimeMarketConfig {
+        symbol: config.symbol.clone(),
+        timeframe: config.timeframe.clone(),
+        generation: 1,
+    };
+    let (changes, _receiver) = watch::channel(initial.clone());
     RUNTIME
         .set(RuntimeMarket {
-            symbol: RwLock::new(config.symbol.clone()),
-            timeframe: RwLock::new(config.timeframe.clone()),
-            generation: AtomicU64::new(1),
+            config: RwLock::new(initial),
+            changes,
         })
         .map_err(|_| anyhow::anyhow!("runtime market configuration already initialized"))
 }
 
 pub fn current() -> RuntimeMarketConfig {
-    let runtime = RUNTIME.get().expect("runtime market configuration not initialized");
-    RuntimeMarketConfig {
-        symbol: runtime.symbol.read().clone(),
-        timeframe: runtime.timeframe.read().clone(),
-        generation: runtime.generation.load(Ordering::Acquire),
-    }
+    RUNTIME
+        .get()
+        .expect("runtime market configuration not initialized")
+        .config
+        .read()
+        .clone()
+}
+
+pub fn subscribe() -> watch::Receiver<RuntimeMarketConfig> {
+    RUNTIME
+        .get()
+        .expect("runtime market configuration not initialized")
+        .changes
+        .subscribe()
 }
 
 pub fn update(request: RuntimeMarketUpdate) -> Result<RuntimeMarketConfig> {
-    let runtime = RUNTIME.get().expect("runtime market configuration not initialized");
-    let previous = current();
+    let runtime = RUNTIME
+        .get()
+        .expect("runtime market configuration not initialized");
+    let previous = runtime.config.read().clone();
+
     let symbol = request
         .symbol
         .map(|value| value.trim().to_ascii_uppercase())
-        .unwrap_or(previous.symbol);
+        .unwrap_or_else(|| previous.symbol.clone());
     let timeframe = request
         .timeframe
         .map(|value| value.trim().to_string())
-        .unwrap_or(previous.timeframe);
+        .unwrap_or_else(|| previous.timeframe.clone());
 
     validate_symbol(&symbol)?;
     validate_timeframe(&timeframe)?;
 
-    let changed = *runtime.symbol.read() != symbol || *runtime.timeframe.read() != timeframe;
-    if changed {
-        *runtime.symbol.write() = symbol;
-        *runtime.timeframe.write() = timeframe;
-        runtime.generation.fetch_add(1, Ordering::AcqRel);
+    if previous.symbol == symbol && previous.timeframe == timeframe {
+        return Ok(previous);
     }
-    Ok(current())
+
+    let next = RuntimeMarketConfig {
+        symbol,
+        timeframe,
+        generation: previous.generation.saturating_add(1),
+    };
+    *runtime.config.write() = next.clone();
+    runtime.changes.send_replace(next.clone());
+    Ok(next)
 }
 
 fn validate_symbol(symbol: &str) -> Result<()> {
