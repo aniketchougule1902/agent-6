@@ -7,8 +7,8 @@ Agent-6 is a **local-first, continuously running crypto market analysis workstat
 ## Core principles
 
 - **Local only:** no cloud hosting is required.
-- **Always-on while the process is running:** reconnecting market streams, heartbeat monitoring, health checks, and alarms.
-- **Fast typed path:** Rust owns ingestion, market state, feature calculation, signal lifecycle, risk checks, and event delivery.
+- **Always-on while the process is running:** reconnecting market streams, heartbeat monitoring, stale-feed protection, health checks, and alarms.
+- **Fast typed path:** Rust owns ingestion, exact local L50 book state, market features, signal lifecycle, risk checks, and event delivery.
 - **Type-safe UI contract:** Rust types are exported to TypeScript with `ts-rs`; TypeScript runs with strict mode.
 - **AI is not in the critical latency path:** ML/LLM research can suggest challengers, but live decisions stay deterministic and bounded.
 - **Self-evolution is gated:** challengers must pass replay, walk-forward, cost/slippage stress, shadow evaluation, and promotion rules before they can replace the champion.
@@ -22,16 +22,19 @@ Bybit V5 public WS/REST
         |
         v
 Rust Market Gateway
-  | trades / L50 book / ticker / liquidations
+  | trades / exact L50 snapshot+delta book / ticker / liquidations
   | 1m / 3m / 5m / 15m candles
         |
         v
 Typed Market State
         |
+        +--> Feed Integrity Gate
+        |      event age / order-book age / reconnect state
+        |
         +--> Feature Engine
         |      HTF trend / ATR / VWAP / momentum
-        |      spread / book imbalance / trade-flow imbalance
-        |      OI/funding / liquidation pressure / regime
+        |      spread / L50 + top5 imbalance / microprice
+        |      trade flow / OI / funding / liquidation / regime
         |
         +--> Signal + Risk Engine
         |      LONG / SHORT / NO_TRADE
@@ -59,9 +62,12 @@ The local dashboard rings distinct tones for:
 - stop-loss hit
 - invalidation/expiry
 - market-feed disconnect/reconnect
+- stale-feed halt/recovery
 - future model promotion/drift alerts
 
 The Rust process also emits a terminal bell as a secondary fallback for critical events.
+
+> Browsers require a user gesture before WebAudio is allowed. Click **ENABLE ALARMS** once after opening the dashboard; after that, signal/TP/SL/feed events ring automatically while the dashboard is open.
 
 ## Requirements
 
@@ -125,14 +131,18 @@ Environment variables:
 A6_SYMBOL=BTCUSDT
 A6_BYBIT_TESTNET=false
 A6_HTTP_ADDR=127.0.0.1:8787
+A6_TIMEFRAME=3
 A6_MIN_SIGNAL_SCORE=0.74
 A6_MIN_RR=1.8
 A6_SIGNAL_COOLDOWN_SECS=90
 A6_MAX_SPREAD_BPS=4.0
+A6_STALE_FEED_MS=3500
 A6_JOURNAL_PATH=data/journal.jsonl
 ```
 
 Use `BTCUSDT`, `ETHUSDT`, or another Bybit linear perpetual symbol supported by the public feed.
+
+`A6_TIMEFRAME` is the setup label/execution timeframe for the current engine milestone; the chart itself can switch among 1m/3m/5m/15m. Runtime symbol/timeframe switching without restart is on the 24-hour roadmap.
 
 ## Development commands
 
@@ -171,6 +181,8 @@ cargo run -p agent6-engine
 
 A displayed `confidence` in the first heuristic milestone is a **setup-quality score, not a calibrated probability of profit**. The project roadmap replaces this with out-of-sample calibrated probabilities after sufficient replay/training data exists.
 
+The engine refuses new setups when the feed or order-book data exceeds its freshness threshold.
+
 The engine must account for fees, spread, slippage, latency, adverse selection, and drawdown before any strategy is considered promotable. A 90% win-rate target is **not** treated as a success criterion; positive after-cost expectancy and controlled tail risk are.
 
 Real-money autonomous execution stays disabled until the repository contains explicit exchange-auth, execution-simulation, paper/shadow evidence, kill switches, and risk controls.
@@ -188,7 +200,7 @@ The first gateway targets Bybit V5 public linear-perpetual endpoints:
 
 - live klines: 1m/3m/5m/15m
 - public trades
-- L50 order book
+- L50 snapshot/delta order book
 - derivatives ticker
 - all-liquidation stream
 - REST historical kline backfill
