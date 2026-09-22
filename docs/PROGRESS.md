@@ -85,6 +85,22 @@
 
 - Previous head Actions run `35772137230` is confirmed green.
 - Drift code commit: `1c2bde69918f8d0444192a57bac4e412aad5a657`; tests: `4fba44ca16b9e8c2c1a32f71b67e4f3a6173d159`.
+- Drift head Actions run `35778894627` passed.
+
+## 2026-09-23 — Confidence bucket diagnostics checkpoint
+
+### Completed
+
+- Added deterministic equal-width held-out confidence bucket reporting with count, coverage, mean probability, observed positive rate and per-bucket Brier score.
+- Added strict probability/label validation and boundary coverage including probabilities exactly 0 and 1.
+- Added tests proving every observation is accounted for, bucket metrics use only bucket members, and malformed inputs fail closed.
+- Reconciled stale roadmap boxes for the already-completed LightGBM baseline, TP-before-SL/time-to-event labels, and this confidence report.
+- Reporting remains research-only and cannot enable real-money execution.
+
+### Validation
+
+- Previous head Actions run `35778894627` is confirmed green.
+- Confidence code commit: `bb81a6e9513db9941bb2f462d52802db1c305db4`; tests/follow-up: `df91ce46b60b29aef20e219e990e9cd78446e401`, `4c434b789a279f8c8762aedc0a5d841a725e739c`.
 - New-head CI pending; do not claim this checkpoint green until Actions completes.
 
 ### Current highest-priority gaps
@@ -93,4 +109,4 @@
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add confidence-bucket reporting, then champion/challenger registry and rollback.
+5. Add CatBoost/purged-split/model-manifest work, then champion/challenger registry and rollback.
