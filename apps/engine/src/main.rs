@@ -6,6 +6,7 @@ mod microstructure;
 mod replay;
 mod runtime;
 mod signal;
+mod simulator;
 mod state;
 mod types;
 
