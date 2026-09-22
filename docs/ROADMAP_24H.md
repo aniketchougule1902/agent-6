@@ -31,7 +31,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [x] Trade velocity, signed notional and large-trade detection
 - [x] Liquidation burst features
 - [x] Rolling OI delta windows
-- [ ] Runtime symbol/timeframe controls without restart
+- [x] Runtime symbol/timeframe controls without restart
 
 ## H6–H8 — Persistence and replay
 

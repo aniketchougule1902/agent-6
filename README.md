@@ -142,6 +142,20 @@ A6_JOURNAL_PATH=data/journal.jsonl
 
 Use `BTCUSDT`, `ETHUSDT`, or another Bybit linear perpetual symbol supported by the public feed.
 
+### Change market without restarting
+
+With the local engine and dashboard running, use the symbol field and 1m/3m/5m/15m buttons in the dashboard. Symbol changes clear old symbol-specific state, backfill the new market and rebuild the Bybit subscription without restarting the process.
+
+The same control is available through the local API:
+
+```bash
+curl -X POST http://127.0.0.1:8787/api/market \
+  -H "content-type: application/json" \
+  -d '{"symbol":"ETHUSDT","timeframe":"5"}'
+
+curl http://127.0.0.1:8787/api/market
+```
+
 `A6_TIMEFRAME` is the setup label/execution timeframe for the current engine milestone; the chart itself can switch among 1m/3m/5m/15m. Runtime symbol/timeframe switching without restart is on the 24-hour roadmap.
 
 ## Development commands

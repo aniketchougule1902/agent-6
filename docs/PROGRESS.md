@@ -113,3 +113,32 @@
 3. Feed deterministic replay through the exact production Rust state/feature/signal path.
 4. Drive the execution simulator from replay and add MFE/MAE/time-to-target labels.
 5. Add Parquet/DuckDB persistence and the no-lookahead research feature factory.
+
+
+## 2026-09-22 — End-to-end runtime market controls
+
+### Completed
+
+- Confirmed repaired baseline CI run `35714511788` was green before advancing.
+- Reworked runtime market configuration around one typed atomic config plus a Tokio watch channel.
+- Added local `GET /api/market` and validated `POST /api/market` controls.
+- Symbol changes clear symbol-specific price, L50 book, flows, OI, features and active-signal state before the replacement market is loaded.
+- The Bybit worker observes runtime changes and rebuilds backfill/subscriptions for a new symbol without restarting Agent-6.
+- Timeframe-only changes avoid unnecessary exchange reconnects because all supported candle intervals are already subscribed; they clear active-signal context and update new-signal metadata immediately.
+- Historical backfill now targets the runtime-selected market instead of immutable startup configuration.
+- Engine snapshots expose runtime symbol, timeframe and generation through the generated Rust→TypeScript contract.
+- New TradeSignal records use the current runtime symbol/timeframe.
+- Added server-backed dashboard symbol loading and 1m/3m/5m/15m timeframe controls, including visible validation failures.
+- Preserved all audible feed/signal/TP/SL alarms and the analysis/paper-only boundary.
+
+### Validation
+
+- Engine commit `a390fd09cb6b5eea16cdf9e4e941294a5bda0cb1` and this UI/docs checkpoint must pass the complete CI pipeline before runtime controls are considered validated.
+
+### Next highest-impact work
+
+1. Wire every accepted normalized Bybit market event into the typed recorder.
+2. Feed deterministic replay through the exact production Rust market-state/feature/signal path.
+3. Add MFE/MAE and time-to-target outcome labels.
+4. Drive the execution simulator from replay so fees/slippage/latency/fill behavior is validated end-to-end.
+5. Add Parquet/DuckDB persistence and the no-lookahead research feature factory.

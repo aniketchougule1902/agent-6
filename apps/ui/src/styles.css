@@ -121,3 +121,23 @@ header {
   .levels, .feature-grid { grid-template-columns: repeat(2, 1fr); }
   .event { grid-template-columns: 80px 110px 1fr; }
 }
+
+
+.ticker-control { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.symbol-form { display: flex; align-items: center; gap: 8px; }
+.symbol-input {
+  width: 150px;
+  border: 1px solid #2b3442;
+  background: #0d121a;
+  color: #e8edf7;
+  border-radius: 8px;
+  padding: 9px 11px;
+  font: inherit;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  outline: none;
+}
+.symbol-input:focus { border-color: #6f8cff; box-shadow: 0 0 0 2px rgba(111, 140, 255, 0.12); }
+.market-error { color: #ff8a9d; font-size: 11px; max-width: 320px; }
+.button:disabled, .tf:disabled { opacity: 0.55; cursor: wait; }

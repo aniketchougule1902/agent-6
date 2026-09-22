@@ -12,6 +12,7 @@ import type { AlertKind } from "./generated/AlertKind";
 import type { EngineEvent } from "./generated/EngineEvent";
 import type { EngineSnapshot } from "./generated/EngineSnapshot";
 import type { TradeSignal } from "./generated/TradeSignal";
+import type { RuntimeMarketUpdate } from "./generated/RuntimeMarketUpdate";
 
 type Timeframe = "1" | "3" | "5" | "15";
 type WsEnvelope =
@@ -19,6 +20,7 @@ type WsEnvelope =
   | { kind: "event"; data: EngineEvent };
 
 const WS_URL = import.meta.env.VITE_ENGINE_WS ?? "ws://127.0.0.1:8787/ws";
+const MARKET_API = import.meta.env.VITE_MARKET_API ?? "/api/market";
 
 function useAudioAlarms() {
   const context = useRef<AudioContext | null>(null);
@@ -228,9 +230,36 @@ export default function App() {
   const [events, setEvents] = useState<EngineEvent[]>([]);
   const [socketUp, setSocketUp] = useState(false);
   const [timeframe, setTimeframe] = useState<Timeframe>("3");
+  const [symbolInput, setSymbolInput] = useState("BTCUSDT");
+  const [marketUpdating, setMarketUpdating] = useState(false);
+  const [marketError, setMarketError] = useState<string | null>(null);
   const alarms = useAudioAlarms();
   const alarmPlayer = useRef(alarms.play);
   alarmPlayer.current = alarms.play;
+
+  async function updateMarket(update: RuntimeMarketUpdate) {
+    setMarketUpdating(true);
+    setMarketError(null);
+    try {
+      const response = await fetch(MARKET_API, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(update),
+      });
+      const payload = await response.json() as {
+        symbol?: string;
+        timeframe?: string;
+        error?: string;
+      };
+      if (!response.ok) throw new Error(payload.error ?? "Market update failed");
+      if (payload.symbol) setSymbolInput(payload.symbol);
+      if (payload.timeframe) setTimeframe(payload.timeframe as Timeframe);
+    } catch (error) {
+      setMarketError(error instanceof Error ? error.message : "Market update failed");
+    } finally {
+      setMarketUpdating(false);
+    }
+  }
 
   useEffect(() => {
     let socket: WebSocket | null = null;
@@ -244,6 +273,8 @@ export default function App() {
         const envelope = JSON.parse(message.data) as WsEnvelope;
         if (envelope.kind === "snapshot") {
           setSnapshot(envelope.data);
+          setTimeframe(envelope.data.timeframe as Timeframe);
+          setSymbolInput(envelope.data.symbol);
         } else {
           setEvents((current) => [envelope.data, ...current].slice(0, 30));
           if (envelope.data.alert) alarmPlayer.current(envelope.data.alert);
@@ -297,15 +328,41 @@ export default function App() {
       </header>
 
       <section className="ticker-row">
-        <div>
-          <span className="ticker">{snapshot.symbol}</span>
-          <strong className="last-price">
-            {snapshot.last_price?.toLocaleString(undefined, { maximumFractionDigits: 4 }) ?? "—"}
-          </strong>
+        <div className="ticker-control">
+          <form
+            className="symbol-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void updateMarket({ symbol: symbolInput, timeframe: null });
+            }}
+          >
+            <input
+              aria-label="Crypto symbol"
+              className="symbol-input"
+              value={symbolInput}
+              onChange={(event) => setSymbolInput(event.target.value.toUpperCase())}
+              spellCheck={false}
+            />
+            <button className="button" type="submit" disabled={marketUpdating}>
+              {marketUpdating ? "SWITCHING…" : "LOAD"}
+            </button>
+          </form>
+          <div>
+            <span className="ticker">{snapshot.symbol}</span>
+            <strong className="last-price">
+              {snapshot.last_price?.toLocaleString(undefined, { maximumFractionDigits: 4 }) ?? "—"}
+            </strong>
+          </div>
+          {marketError && <span className="market-error">{marketError}</span>}
         </div>
         <div className="timeframes">
           {(["1", "3", "5", "15"] as Timeframe[]).map((tf) => (
-            <button key={tf} className={timeframe === tf ? "tf active" : "tf"} onClick={() => setTimeframe(tf)}>
+            <button
+              key={tf}
+              className={timeframe === tf ? "tf active" : "tf"}
+              disabled={marketUpdating}
+              onClick={() => void updateMarket({ symbol: null, timeframe: tf })}
+            >
               {tf}m
             </button>
           ))}
