@@ -76,7 +76,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [ ] uncertainty/disagreement features
 - [x] NO_TRADE threshold from validation
 - [ ] confidence bucket report
-- [ ] probability drift monitor
+- [x] probability drift monitor
 
 ## H16–H18 — Self-evolution
 
