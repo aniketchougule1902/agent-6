@@ -3,6 +3,7 @@ mod bybit;
 mod config;
 mod journal;
 mod microstructure;
+mod replay;
 mod signal;
 mod state;
 mod types;
