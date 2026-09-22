@@ -106,17 +106,29 @@
 - The live-recorder facade rejects L50 deltas before a snapshot and stale/non-monotonic sequence or update IDs before any disk write can occur.
 - Snapshot/update-id reset semantics allow a clean Bybit reconnect without carrying the old cursor forward.
 - Added tests for delta-before-snapshot rejection, monotonic snapshot/delta acceptance, stale sequence/update rejection and reconnect reset behavior.
-- Registered the module in the engine so CI compiles and runs the tests.
 
 ### Validation
 
-- Baseline GitHub Actions run `35738131690` is green.
-- Code commits: `2d182a6404615dbabb93030fc03db83fac7dbfe2` and `1c2d7bbc51b370de1b1c8cd709c85611a426987e`.
-- New-head CI is pending; do not claim this checkpoint green until the run completes.
+- GitHub Actions run `35745161038` passed for `095029b25459a5421f56d2f975c97b5c59aafe85`.
+
+## 2026-09-22 — Atomic Bybit recorder batch checkpoint
+
+### Completed
+
+- Added configurable `A6_MARKET_RECORD_PATH` with a safe local default at `data/market-events.jsonl`.
+- Added `AcceptedMarketRecorder::append_bybit_message`, joining the tested Bybit V5 normalizer directly to the integrity-gated typed recorder API.
+- Whole websocket payloads are integrity-validated against a cloned cursor before any event in that payload is written, preventing partial batch persistence and preventing rejected batches from advancing the live L50 cursor.
+- Control/heartbeat payloads remain zero-write operations.
+
+### Validation
+
+- Baseline Actions run `35745161038` is green.
+- Code commits: `f8be4d6edc1ce07b4b7e954cb2e3a1082c509381` and `359e231661299f771a4a79c0dfc0b5a0e0e7c197`.
+- New-head CI is pending; do not claim this checkpoint green until it completes.
 
 ### Current highest-priority gaps
 
-1. Wire the tested Bybit normalizer into the production accepted-message path and append accepted events through `AcceptedMarketRecorder` so rejected live L50 messages never reach disk.
+1. Invoke `append_bybit_message` from the production live websocket path only after the corresponding market-state payload is accepted; rejected stale/non-monotonic L50 messages must remain zero-write.
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
