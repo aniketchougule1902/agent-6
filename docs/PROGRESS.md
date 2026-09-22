@@ -96,13 +96,27 @@
 
 ### Validation
 
-- Baseline GitHub Actions run `35731508705` was green before this checkpoint.
-- Code commits: `e7ab9cca2e5efd128911a83bb6a1207d10eefc56` and `624efd32ecfa721fa53efa64821695c4b9859d0e`.
-- New-head GitHub Actions validation is pending; do not claim this checkpoint green until it completes.
+- GitHub Actions run `35738131690` passed for `b5bf43de2a45c692fbb5fa9dff055045e174b37b`.
+
+## 2026-09-22 — Live recorder integrity admission gate
+
+### Completed
+
+- Added `RecordingIntegrityGate` and `AcceptedMarketRecorder` in the Rust engine.
+- The live-recorder facade rejects L50 deltas before a snapshot and stale/non-monotonic sequence or update IDs before any disk write can occur.
+- Snapshot/update-id reset semantics allow a clean Bybit reconnect without carrying the old cursor forward.
+- Added tests for delta-before-snapshot rejection, monotonic snapshot/delta acceptance, stale sequence/update rejection and reconnect reset behavior.
+- Registered the module in the engine so CI compiles and runs the tests.
+
+### Validation
+
+- Baseline GitHub Actions run `35738131690` is green.
+- Code commits: `2d182a6404615dbabb93030fc03db83fac7dbfe2` and `1c2d7bbc51b370de1b1c8cd709c85611a426987e`.
+- New-head CI is pending; do not claim this checkpoint green until the run completes.
 
 ### Current highest-priority gaps
 
-1. Call the tested Bybit normalizer only after the live handler accepts a payload and append those events to `MarketRecorder`; rejected stale/non-monotonic L50 deltas must never enter the recording.
+1. Wire the tested Bybit normalizer into the production accepted-message path and append accepted events through `AcceptedMarketRecorder` so rejected live L50 messages never reach disk.
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
