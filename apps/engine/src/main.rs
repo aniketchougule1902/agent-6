@@ -1,5 +1,6 @@
 mod api;
 mod bybit;
+mod bybit_record;
 mod config;
 mod journal;
 mod microstructure;
