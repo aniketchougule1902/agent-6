@@ -90,3 +90,35 @@
 3. Re-run the live Rust feature/signal path against replayed events.
 4. Add MFE/MAE and time-to-target outcome labels.
 5. Build the realistic fee/slippage/latency/fill simulator.
+
+## 2026-09-22 — Typed recorder/replay foundation
+
+### Completed
+
+- Added a strongly typed `NormalizedMarketEvent` schema covering trades, exact order-book snapshots/deltas, ticker/derivatives state, liquidations and klines.
+- Added append-only normalized JSONL `MarketRecorder` primitives with explicit error context and directory creation.
+- Added typed recording loader with line-numbered decode failures rather than silently accepting corrupt replay data.
+- Added a deterministic replay iterator that sorts by exchange timestamp, exposes replay-relative elapsed time and can reset to reproduce the identical event sequence.
+- Added unit tests for deterministic ordering/time, reset reproducibility and typed JSON round-tripping.
+- Compiled the replay module into the Rust engine so CI exercises the new tests.
+
+### Validation
+
+- `main` was green before this checkpoint (run `35708319469`).
+- CI run `35708601962` validates the compiled replay module; its final status must be checked before claiming this checkpoint green.
+
+### Current limitations
+
+- Runtime symbol/timeframe switching is still the highest-priority incomplete H4–H6 item.
+- The recorder primitives are not yet wired to every live normalized Bybit event, so the roadmap raw-recorder item remains open.
+- Replay does not yet feed the exact live state/feature/signal path, so deterministic replay is foundation-only rather than end-to-end complete.
+- Parquet/DuckDB persistence and MFE/MAE outcome labeling remain incomplete.
+- Real-money autonomous execution remains disabled.
+
+### Next highest-impact work
+
+1. Add runtime symbol/timeframe controls without process restart.
+2. Wire `NormalizedMarketEvent` recording into all accepted live Bybit event paths.
+3. Feed deterministic replay through the same Rust market-state/feature/signal path used live.
+4. Add typed Parquet/DuckDB persistence and MFE/MAE/time-to-target labels.
+5. Build the realistic fee/slippage/latency/fill simulator.
