@@ -1,11 +1,11 @@
 use crate::{
-    state::{now_ms, AppState, FlowSample},
+    state::{now_ms, AppState, FlowSample, InternalState},
     types::{AlertKind, Candle, EngineEvent},
 };
 use anyhow::{Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
 use tokio::time;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{info, warn};
@@ -72,6 +72,7 @@ pub async fn run_forever(state: AppState) {
         {
             let mut inner = state.inner.write();
             inner.connected = false;
+            inner.feed_stale = true;
             inner.updated_at_ms = now_ms();
         }
         state.publish(EngineEvent {
@@ -108,9 +109,12 @@ async fn run_session(state: &AppState) -> Result<()> {
         .await?;
 
     {
+        let now = now_ms();
         let mut inner = state.inner.write();
         inner.connected = true;
-        inner.updated_at_ms = now_ms();
+        inner.feed_stale = false;
+        inner.last_market_event_ms = now;
+        inner.updated_at_ms = now;
     }
     state.publish(EngineEvent {
         ts_ms: now_ms(),
@@ -153,6 +157,7 @@ fn handle_message(state: &AppState, text: &str) {
     let now = now_ms();
     let mut inner = state.inner.write();
     inner.updated_at_ms = now;
+    inner.last_market_event_ms = now;
 
     if topic.starts_with("kline.") {
         if let Some(data) = root.get("data").and_then(Value::as_array) {
@@ -187,20 +192,29 @@ fn handle_message(state: &AppState, text: &str) {
         }
     } else if topic.starts_with("orderbook.") {
         if let Some(data) = root.get("data") {
-            let bids = data.get("b").and_then(Value::as_array);
-            let asks = data.get("a").and_then(Value::as_array);
-            let bid_volume = side_volume(bids);
-            let ask_volume = side_volume(asks);
-            let total = bid_volume + ask_volume;
-            if total > 0.0 {
-                inner.book_imbalance = (bid_volume - ask_volume) / total;
+            let kind = root.get("type").and_then(Value::as_str).unwrap_or("delta");
+            let update_id = data.get("u").and_then(Value::as_u64).unwrap_or_default();
+            let seq = data.get("seq").and_then(Value::as_u64).unwrap_or_default();
+            let cts = data.get("cts").and_then(Value::as_u64).unwrap_or(now);
+            let reset = kind == "snapshot" || update_id == 1;
+
+            if reset {
+                inner.orderbook_bids.clear();
+                inner.orderbook_asks.clear();
+            } else if seq > 0 && inner.orderbook_seq > 0 && seq <= inner.orderbook_seq {
+                return;
             }
-            if let Some(price) = best_price(bids) {
-                inner.bid = Some(price);
+
+            if let Some(bids) = data.get("b").and_then(Value::as_array) {
+                apply_levels(&mut inner.orderbook_bids, bids);
             }
-            if let Some(price) = best_price(asks) {
-                inner.ask = Some(price);
+            if let Some(asks) = data.get("a").and_then(Value::as_array) {
+                apply_levels(&mut inner.orderbook_asks, asks);
             }
+            inner.orderbook_update_id = update_id;
+            inner.orderbook_seq = seq;
+            inner.orderbook_event_ms = cts;
+            recalculate_book_metrics(&mut inner);
         }
     } else if topic.starts_with("tickers.") {
         if let Some(data) = root.get("data") {
@@ -215,14 +229,11 @@ fn handle_message(state: &AppState, text: &str) {
                 }
             }
             inner.funding_rate = data.get("fundingRate").and_then(parse_f64).or(inner.funding_rate);
-            inner.bid = data.get("bid1Price").and_then(parse_f64).or(inner.bid);
-            inner.ask = data.get("ask1Price").and_then(parse_f64).or(inner.ask);
         }
     } else if topic.starts_with("allLiquidation.") {
         if let Some(data) = root.get("data").and_then(Value::as_array) {
             for liq in data {
                 let qty = liq.get("v").and_then(parse_f64).unwrap_or_default();
-                // Bybit documents S=Buy as a long-position liquidation.
                 let sign = if liq.get("S").and_then(Value::as_str) == Some("Buy") { -1.0 } else { 1.0 };
                 inner.push_liquidation_flow(FlowSample {
                     ts_ms: liq.get("T").and_then(parse_u64).unwrap_or(now),
@@ -235,22 +246,66 @@ fn handle_message(state: &AppState, text: &str) {
     inner.prune_flows(now);
 }
 
-fn side_volume(levels: Option<&Vec<Value>>) -> f64 {
-    levels
-        .into_iter()
-        .flatten()
-        .filter_map(Value::as_array)
-        .filter_map(|x| x.get(1))
-        .filter_map(parse_f64)
-        .sum()
+fn apply_levels(book: &mut HashMap<String, (f64, f64)>, levels: &[Value]) {
+    for level in levels {
+        let Some(values) = level.as_array() else {
+            continue;
+        };
+        let Some(price_text) = values.first().and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(price) = values.first().and_then(parse_f64) else {
+            continue;
+        };
+        let size = values.get(1).and_then(parse_f64).unwrap_or_default();
+        if size == 0.0 {
+            book.remove(price_text);
+        } else {
+            book.insert(price_text.to_string(), (price, size));
+        }
+    }
 }
 
-fn best_price(levels: Option<&Vec<Value>>) -> Option<f64> {
-    levels
-        .and_then(|x| x.first())
-        .and_then(Value::as_array)
-        .and_then(|x| x.first())
-        .and_then(parse_f64)
+fn recalculate_book_metrics(inner: &mut InternalState) {
+    let mut bids: Vec<(f64, f64)> = inner.orderbook_bids.values().copied().collect();
+    let mut asks: Vec<(f64, f64)> = inner.orderbook_asks.values().copied().collect();
+    bids.sort_by(|a, b| b.0.total_cmp(&a.0));
+    asks.sort_by(|a, b| a.0.total_cmp(&b.0));
+
+    inner.bid = bids.first().map(|x| x.0);
+    inner.ask = asks.first().map(|x| x.0);
+
+    let total_bid: f64 = bids.iter().map(|x| x.1).sum();
+    let total_ask: f64 = asks.iter().map(|x| x.1).sum();
+    inner.book_imbalance = imbalance(total_bid, total_ask);
+
+    let top5_bid: f64 = bids.iter().take(5).map(|x| x.1).sum();
+    let top5_ask: f64 = asks.iter().take(5).map(|x| x.1).sum();
+    inner.book_imbalance_top5 = imbalance(top5_bid, top5_ask);
+
+    inner.microprice_bps = match (bids.first(), asks.first()) {
+        (Some((bid_price, bid_size)), Some((ask_price, ask_size)))
+            if *bid_size + *ask_size > 0.0 =>
+        {
+            let mid = (bid_price + ask_price) / 2.0;
+            let micro = (ask_price * bid_size + bid_price * ask_size) / (bid_size + ask_size);
+            if mid > 0.0 {
+                (micro - mid) / mid * 10_000.0
+            } else {
+                0.0
+            }
+        }
+        _ => 0.0,
+    };
+}
+
+fn imbalance(bid: f64, ask: f64) -> f64 {
+    let total = bid + ask;
+    if total <= f64::EPSILON {
+        0.0
+    } else {
+        ((bid - ask) / total).clamp(-1.0, 1.0)
+    }
 }
 
 fn parse_f64(value: &Value) -> Option<f64> {

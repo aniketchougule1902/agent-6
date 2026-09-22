@@ -20,12 +20,21 @@ pub(crate) struct FlowSample {
 #[derive(Debug)]
 pub(crate) struct InternalState {
     pub connected: bool,
+    pub feed_stale: bool,
+    pub last_market_event_ms: u64,
     pub last_price: Option<f64>,
     pub mark_price: Option<f64>,
     pub index_price: Option<f64>,
     pub bid: Option<f64>,
     pub ask: Option<f64>,
     pub book_imbalance: f64,
+    pub book_imbalance_top5: f64,
+    pub microprice_bps: f64,
+    pub orderbook_bids: HashMap<String, (f64, f64)>,
+    pub orderbook_asks: HashMap<String, (f64, f64)>,
+    pub orderbook_update_id: u64,
+    pub orderbook_seq: u64,
+    pub orderbook_event_ms: u64,
     pub open_interest: Option<f64>,
     pub previous_open_interest: Option<f64>,
     pub funding_rate: Option<f64>,
@@ -40,14 +49,24 @@ pub(crate) struct InternalState {
 
 impl InternalState {
     fn new() -> Self {
+        let now = now_ms();
         Self {
             connected: false,
+            feed_stale: false,
+            last_market_event_ms: now,
             last_price: None,
             mark_price: None,
             index_price: None,
             bid: None,
             ask: None,
             book_imbalance: 0.0,
+            book_imbalance_top5: 0.0,
+            microprice_bps: 0.0,
+            orderbook_bids: HashMap::new(),
+            orderbook_asks: HashMap::new(),
+            orderbook_update_id: 0,
+            orderbook_seq: 0,
+            orderbook_event_ms: 0,
             open_interest: None,
             previous_open_interest: None,
             funding_rate: None,
@@ -57,7 +76,7 @@ impl InternalState {
             features: None,
             active_signal: None,
             last_signal_at_ms: 0,
-            updated_at_ms: now_ms(),
+            updated_at_ms: now,
         }
     }
 
@@ -135,9 +154,12 @@ impl AppState {
                 .map(|x| x.iter().cloned().collect())
                 .unwrap_or_default()
         };
+        let now = now_ms();
         EngineSnapshot {
             symbol: self.config.symbol.clone(),
             connected: s.connected,
+            feed_stale: s.feed_stale,
+            feed_age_ms: now.saturating_sub(s.last_market_event_ms),
             last_price: s.last_price,
             mark_price: s.mark_price,
             index_price: s.index_price,

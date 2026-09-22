@@ -10,8 +10,11 @@
 - Added Bybit V5 live linear-perpetual market gateway.
 - Added REST historical kline backfill.
 - Added 1m/3m/5m/15m market state.
-- Added real-time trades, L50 book summaries, derivatives ticker and liquidation ingestion.
+- Added real-time trades, exact L50 snapshot/delta local-book reconstruction, derivatives ticker and liquidation ingestion.
+- Added L50 and top-5 imbalance plus microprice displacement.
 - Added heartbeat and automatic reconnect loop.
+- Added stale-feed and order-book age integrity gates; new signals suspend while data is stale.
+- Added distinct stale/recovery alarms.
 - Added typed feature snapshot.
 - Added baseline confluence signal/risk engine.
 - Added entry/SL/TP1/TP2 lifecycle tracking.
@@ -24,18 +27,19 @@
 - Added distinct WebAudio alarm patterns for signal, TP, SL and feed state.
 - Added research promotion-policy skeleton.
 - Added CI workflow for Rust and UI verification.
+- First full GitHub Actions run passed Rust tests, generated contracts, UI typecheck and UI build.
 
 ### Current limitations
 
-- Book imbalance currently uses each L50 message payload; exact snapshot+delta reconstruction is next.
+- Book depletion/replenishment, slope and queue dynamics are not yet modeled.
 - The initial confidence number is a heuristic quality score and is intentionally marked uncalibrated.
 - The ML/replay/calibration/evolution pipeline is scaffolded but not yet complete.
 - No real-money order execution is enabled.
 
 ### Next highest-impact work
 
-1. Make CI green and fix all compile/type errors.
-2. Implement full L50 snapshot/delta reconstruction.
-3. Add feed-age watchdog and market-data integrity gates.
-4. Add deterministic recorder/replay.
-5. Build realistic execution/cost simulator.
+1. Add depth slope, replenishment/depletion, trade velocity and liquidation-burst features.
+2. Add runtime symbol/timeframe controls.
+3. Implement typed recorder/replay.
+4. Build realistic execution/cost simulator.
+5. Build the calibrated meta-label research pipeline.

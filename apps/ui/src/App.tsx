@@ -29,7 +29,6 @@ function useAudioAlarms() {
     context.current = audio;
     await audio.resume();
     setEnabled(true);
-    play("feed_reconnected");
   }
 
   function play(kind: AlertKind) {
@@ -44,6 +43,8 @@ function useAudioAlarms() {
       expired: [330, 0.15, 2],
       feed_disconnected: [180, 0.35, 2],
       feed_reconnected: [660, 0.10, 1],
+      feed_stale: [165, 0.32, 3],
+      feed_recovered: [740, 0.10, 2],
       drift: [260, 0.22, 4],
       model_promoted: [1174, 0.13, 4],
     };
@@ -53,7 +54,7 @@ function useAudioAlarms() {
       const start = audio.currentTime + i * (duration + 0.07);
       const oscillator = audio.createOscillator();
       const gain = audio.createGain();
-      oscillator.type = kind === "stop_loss" ? "sawtooth" : "sine";
+      oscillator.type = kind === "stop_loss" || kind === "feed_stale" ? "sawtooth" : "sine";
       oscillator.frequency.setValueAtTime(frequency, start);
       gain.gain.setValueAtTime(0.0001, start);
       gain.gain.exponentialRampToValueAtTime(0.22, start + 0.015);
@@ -68,13 +69,7 @@ function useAudioAlarms() {
   return { enabled, enable, play };
 }
 
-function Chart({
-  snapshot,
-  timeframe,
-}: {
-  snapshot: EngineSnapshot;
-  timeframe: Timeframe;
-}) {
+function Chart({ snapshot, timeframe }: { snapshot: EngineSnapshot; timeframe: Timeframe }) {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -89,17 +84,13 @@ function Chart({
 
   useEffect(() => {
     if (!hostRef.current) return;
-
     const chart = createChart(hostRef.current, {
       autoSize: true,
       layout: {
         background: { type: ColorType.Solid, color: "#0b0f16" },
         textColor: "#aeb8c8",
       },
-      grid: {
-        vertLines: { color: "#151b25" },
-        horzLines: { color: "#151b25" },
-      },
+      grid: { vertLines: { color: "#151b25" }, horzLines: { color: "#151b25" } },
       rightPriceScale: { borderColor: "#252d3a" },
       timeScale: { borderColor: "#252d3a", timeVisible: true, secondsVisible: false },
     });
@@ -110,7 +101,6 @@ function Chart({
       wickUpColor: "#35d399",
       wickDownColor: "#ff5c75",
     });
-
     chartRef.current = chart;
     seriesRef.current = series;
     return () => {
@@ -137,9 +127,7 @@ function Chart({
   useEffect(() => {
     const series = seriesRef.current;
     if (!series) return;
-    for (const line of signalLines.current) {
-      series.removePriceLine(line);
-    }
+    for (const line of signalLines.current) series.removePriceLine(line);
     signalLines.current = [];
 
     const signal = snapshot.active_signal;
@@ -184,13 +172,15 @@ function Chart({
   return <div className="chart" ref={hostRef} />;
 }
 
-function SignalCard({ signal }: { signal: TradeSignal | null }) {
+function SignalCard({ signal, stale }: { signal: TradeSignal | null; stale: boolean }) {
   if (!signal) {
     return (
       <section className="panel signal-card">
         <div className="eyebrow">DECISION ENGINE</div>
-        <h2>NO TRADE</h2>
-        <p className="muted">Waiting for the confluence threshold and risk gates.</p>
+        <h2>{stale ? "DATA HALT" : "NO TRADE"}</h2>
+        <p className="muted">
+          {stale ? "Feed-integrity gate is suspending new setups." : "Waiting for confluence and risk gates."}
+        </p>
       </section>
     );
   }
@@ -217,9 +207,7 @@ function SignalCard({ signal }: { signal: TradeSignal | null }) {
         <Metric label="R:R TP2" value={`1:${signal.risk_reward_tp2.toFixed(2)}`} />
       </div>
       <div className="reason-list">
-        {signal.reasons.map((reason) => (
-          <span key={reason}>{reason}</span>
-        ))}
+        {signal.reasons.map((reason) => <span key={reason}>{reason}</span>)}
       </div>
       <p className="invalidation">{signal.invalidation}</p>
     </section>
@@ -258,17 +246,13 @@ export default function App() {
           setSnapshot(envelope.data);
         } else {
           setEvents((current) => [envelope.data, ...current].slice(0, 30));
-          if (envelope.data.alert) {
-            alarmPlayer.current(envelope.data.alert);
-          }
+          if (envelope.data.alert) alarmPlayer.current(envelope.data.alert);
         }
       };
       socket.onerror = () => socket?.close();
       socket.onclose = () => {
         setSocketUp(false);
-        if (!stopped) {
-          retry = window.setTimeout(connect, 1000);
-        }
+        if (!stopped) retry = window.setTimeout(connect, 1000);
       };
     };
 
@@ -291,6 +275,8 @@ export default function App() {
   }
 
   const f = snapshot.features;
+  const healthy = socketUp && snapshot.connected && !snapshot.feed_stale;
+  const statusText = !socketUp || !snapshot.connected ? "RECONNECTING" : snapshot.feed_stale ? "STALE DATA" : "LIVE";
 
   return (
     <main className="app-shell">
@@ -300,9 +286,9 @@ export default function App() {
           <div className="subtitle">LOCAL CRYPTO SCALPING INTELLIGENCE</div>
         </div>
         <div className="header-actions">
-          <div className={`status ${socketUp && snapshot.connected ? "online" : "offline"}`}>
+          <div className={`status ${healthy ? "online" : "offline"}`}>
             <span />
-            {socketUp && snapshot.connected ? "LIVE" : "RECONNECTING"}
+            {statusText}
           </div>
           <button className={alarms.enabled ? "button enabled" : "button"} onClick={alarms.enable}>
             {alarms.enabled ? "ALARMS ON" : "ENABLE ALARMS"}
@@ -319,11 +305,7 @@ export default function App() {
         </div>
         <div className="timeframes">
           {(["1", "3", "5", "15"] as Timeframe[]).map((tf) => (
-            <button
-              key={tf}
-              className={timeframe === tf ? "tf active" : "tf"}
-              onClick={() => setTimeframe(tf)}
-            >
+            <button key={tf} className={timeframe === tf ? "tf active" : "tf"} onClick={() => setTimeframe(tf)}>
               {tf}m
             </button>
           ))}
@@ -333,20 +315,22 @@ export default function App() {
       <div className="main-grid">
         <section className="panel chart-panel">
           <Chart snapshot={snapshot} timeframe={timeframe} />
-          <div className="attribution">
-            Charts powered by TradingView Lightweight Charts
-          </div>
+          <div className="attribution">Charts powered by TradingView Lightweight Charts</div>
         </section>
 
         <div className="right-column">
-          <SignalCard signal={snapshot.active_signal} />
+          <SignalCard signal={snapshot.active_signal} stale={snapshot.feed_stale} />
 
           <section className="panel">
             <div className="eyebrow">LIVE FEATURE STACK</div>
             <div className="feature-grid">
               <Metric label="REGIME" value={f?.regime.replaceAll("_", " ").toUpperCase() ?? "WARMING"} />
+              <Metric label="FEED AGE" value={f ? `${f.feed_age_ms} ms` : `${snapshot.feed_age_ms} ms`} />
+              <Metric label="BOOK AGE" value={f ? `${f.orderbook_age_ms} ms` : "—"} />
               <Metric label="SPREAD" value={f ? `${f.spread_bps.toFixed(2)} bp` : "—"} />
-              <Metric label="BOOK IMB." value={f ? f.book_imbalance.toFixed(3) : "—"} />
+              <Metric label="L50 IMB." value={f ? f.book_imbalance.toFixed(3) : "—"} />
+              <Metric label="TOP5 IMB." value={f ? f.book_imbalance_top5.toFixed(3) : "—"} />
+              <Metric label="MICROPRICE" value={f ? `${f.microprice_bps.toFixed(2)} bp` : "—"} />
               <Metric label="FLOW IMB." value={f ? f.trade_flow_imbalance.toFixed(3) : "—"} />
               <Metric label="15m TREND" value={f ? `${f.trend_15m_bps.toFixed(1)} bp` : "—"} />
               <Metric label="5m TREND" value={f ? `${f.trend_5m_bps.toFixed(1)} bp` : "—"} />

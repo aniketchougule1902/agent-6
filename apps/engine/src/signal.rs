@@ -20,43 +20,70 @@ pub async fn run_loop(state: AppState) {
             let mut inner = state.inner.write();
             inner.prune_flows(now);
 
+            let stale_now = inner.connected
+                && now.saturating_sub(inner.last_market_event_ms) > state.config.stale_feed_ms;
+            if stale_now != inner.feed_stale {
+                inner.feed_stale = stale_now;
+                events.push(EngineEvent {
+                    ts_ms: now,
+                    event_type: if stale_now { "feed_stale" } else { "feed_recovered" }.into(),
+                    alert: Some(if stale_now {
+                        AlertKind::FeedStale
+                    } else {
+                        AlertKind::FeedRecovered
+                    }),
+                    message: if stale_now {
+                        format!(
+                            "Market feed stale for {} ms; new signals suspended.",
+                            now.saturating_sub(inner.last_market_event_ms)
+                        )
+                    } else {
+                        "Fresh market events resumed; signal generation re-enabled.".into()
+                    },
+                    signal: inner.active_signal.clone(),
+                });
+            }
+
             if let Some(features) = compute_features(&inner, now) {
                 inner.features = Some(features.clone());
-                events.extend(update_signal_lifecycle(&state, &mut inner, now));
 
-                let terminal = inner.active_signal.as_ref().is_some_and(|signal| {
-                    matches!(
-                        signal.status,
-                        SignalStatus::Tp2Hit | SignalStatus::StopLossHit | SignalStatus::Expired
-                    )
-                });
-                if terminal
-                    && now.saturating_sub(inner.last_signal_at_ms)
-                        > state.config.signal_cooldown_secs * 1000
-                {
-                    inner.active_signal = None;
-                }
+                if !inner.feed_stale {
+                    events.extend(update_signal_lifecycle(&mut inner, now));
 
-                if inner.active_signal.is_none()
-                    && now.saturating_sub(inner.last_signal_at_ms)
-                        > state.config.signal_cooldown_secs * 1000
-                {
-                    if let Some(signal) = build_signal(&state, &features, now) {
-                        inner.last_signal_at_ms = now;
-                        inner.active_signal = Some(signal.clone());
-                        events.push(EngineEvent {
-                            ts_ms: now,
-                            event_type: "signal".into(),
-                            alert: Some(AlertKind::Signal),
-                            message: format!(
-                                "{} {:?} setup at {:.4} (quality {:.1}%)",
-                                signal.symbol,
-                                signal.side,
-                                (signal.entry_low + signal.entry_high) / 2.0,
-                                signal.confidence * 100.0
-                            ),
-                            signal: Some(signal),
-                        });
+                    let terminal = inner.active_signal.as_ref().is_some_and(|signal| {
+                        matches!(
+                            signal.status,
+                            SignalStatus::Tp2Hit | SignalStatus::StopLossHit | SignalStatus::Expired
+                        )
+                    });
+                    if terminal
+                        && now.saturating_sub(inner.last_signal_at_ms)
+                            > state.config.signal_cooldown_secs * 1000
+                    {
+                        inner.active_signal = None;
+                    }
+
+                    if inner.active_signal.is_none()
+                        && now.saturating_sub(inner.last_signal_at_ms)
+                            > state.config.signal_cooldown_secs * 1000
+                    {
+                        if let Some(signal) = build_signal(&state, &features, now) {
+                            inner.last_signal_at_ms = now;
+                            inner.active_signal = Some(signal.clone());
+                            events.push(EngineEvent {
+                                ts_ms: now,
+                                event_type: "signal".into(),
+                                alert: Some(AlertKind::Signal),
+                                message: format!(
+                                    "{} {:?} setup at {:.4} (quality {:.1}%)",
+                                    signal.symbol,
+                                    signal.side,
+                                    (signal.entry_low + signal.entry_high) / 2.0,
+                                    signal.confidence * 100.0
+                                ),
+                                signal: Some(signal),
+                            });
+                        }
                     }
                 }
             }
@@ -107,11 +134,13 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     };
 
     let directional_edge =
-        signed_unit(trend_15m / 12.0) * 0.09
-        + signed_unit(trend_5m / 10.0) * 0.08
-        + signed_unit(momentum / 25.0) * 0.08
-        + signed_unit(((price - vwap) / price * 10_000.0) / 12.0) * 0.08
-        + s.book_imbalance.clamp(-1.0, 1.0) * 0.12
+        signed_unit(trend_15m / 12.0) * 0.08
+        + signed_unit(trend_5m / 10.0) * 0.07
+        + signed_unit(momentum / 25.0) * 0.07
+        + signed_unit(((price - vwap) / price * 10_000.0) / 12.0) * 0.07
+        + s.book_imbalance.clamp(-1.0, 1.0) * 0.07
+        + s.book_imbalance_top5.clamp(-1.0, 1.0) * 0.08
+        + signed_unit(s.microprice_bps / 1.5) * 0.05
         + flow * 0.14
         + liq * 0.05
         + signed_unit(oi_delta_pct / 0.08) * signed_unit(momentum / 20.0).abs() * 0.04;
@@ -126,6 +155,8 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
 
     Some(FeatureSnapshot {
         ts_ms: now,
+        feed_age_ms: now.saturating_sub(s.last_market_event_ms),
+        orderbook_age_ms: now.saturating_sub(s.orderbook_event_ms),
         last_price: price,
         spread_bps,
         atr_14: atr,
@@ -134,6 +165,8 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
         trend_5m_bps: trend_5m,
         trend_15m_bps: trend_15m,
         book_imbalance: s.book_imbalance,
+        book_imbalance_top5: s.book_imbalance_top5,
+        microprice_bps: s.microprice_bps,
         trade_flow_imbalance: flow,
         liquidation_pressure: liq,
         open_interest: s.open_interest,
@@ -146,7 +179,10 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
 }
 
 fn build_signal(state: &AppState, f: &FeatureSnapshot, now: u64) -> Option<TradeSignal> {
-    if f.spread_bps > state.config.max_spread_bps {
+    if f.feed_age_ms > state.config.stale_feed_ms
+        || f.orderbook_age_ms > state.config.stale_feed_ms
+        || f.spread_bps > state.config.max_spread_bps
+    {
         return None;
     }
 
@@ -182,7 +218,9 @@ fn build_signal(state: &AppState, f: &FeatureSnapshot, now: u64) -> Option<Trade
     let mut reasons = vec![
         format!("15m trend {:.1} bps", f.trend_15m_bps),
         format!("5m trend {:.1} bps", f.trend_5m_bps),
-        format!("book imbalance {:.2}", f.book_imbalance),
+        format!("L50 imbalance {:.2}", f.book_imbalance),
+        format!("top5 imbalance {:.2}", f.book_imbalance_top5),
+        format!("microprice {:.2} bps", f.microprice_bps),
         format!("trade-flow imbalance {:.2}", f.trade_flow_imbalance),
         format!("spread {:.2} bps", f.spread_bps),
     ];
@@ -210,11 +248,7 @@ fn build_signal(state: &AppState, f: &FeatureSnapshot, now: u64) -> Option<Trade
     })
 }
 
-fn update_signal_lifecycle(
-    _state: &AppState,
-    inner: &mut InternalState,
-    now: u64,
-) -> Vec<EngineEvent> {
+fn update_signal_lifecycle(inner: &mut InternalState, now: u64) -> Vec<EngineEvent> {
     let Some(price) = inner.last_price else {
         return vec![];
     };

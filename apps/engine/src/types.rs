@@ -31,6 +31,8 @@ pub enum AlertKind {
     Expired,
     FeedDisconnected,
     FeedReconnected,
+    FeedStale,
+    FeedRecovered,
     Drift,
     ModelPromoted,
 }
@@ -65,6 +67,8 @@ pub enum MarketRegime {
 #[ts(export)]
 pub struct FeatureSnapshot {
     pub ts_ms: u64,
+    pub feed_age_ms: u64,
+    pub orderbook_age_ms: u64,
     pub last_price: f64,
     pub spread_bps: f64,
     pub atr_14: f64,
@@ -73,6 +77,8 @@ pub struct FeatureSnapshot {
     pub trend_5m_bps: f64,
     pub trend_15m_bps: f64,
     pub book_imbalance: f64,
+    pub book_imbalance_top5: f64,
+    pub microprice_bps: f64,
     pub trade_flow_imbalance: f64,
     pub liquidation_pressure: f64,
     pub open_interest: Option<f64>,
@@ -119,6 +125,8 @@ pub struct EngineEvent {
 pub struct EngineSnapshot {
     pub symbol: String,
     pub connected: bool,
+    pub feed_stale: bool,
+    pub feed_age_ms: u64,
     pub last_price: Option<f64>,
     pub mark_price: Option<f64>,
     pub index_price: Option<f64>,

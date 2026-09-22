@@ -13,20 +13,21 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [x] JSONL decision/event journal
 - [x] Rust-to-TypeScript type generation
 
-## H2–H4 — Live vertical slice
+## H2–H4 — Live vertical slice ✅
 
 - [x] Baseline multi-factor signal engine
 - [x] Entry / SL / TP1 / TP2 lifecycle tracking
 - [x] Local WebSocket API
 - [x] TradingView Lightweight Charts dashboard
 - [x] Audible browser alarms + terminal fallback
-- [ ] CI green on Rust + UI
-- [ ] Add stale-feed watchdog and sequence-age metrics
+- [x] CI green on Rust + UI
+- [x] Add stale-feed watchdog and sequence-age metrics
 
 ## H4–H6 — Market-state depth
 
-- [ ] Correct L50 snapshot/delta local book reconstruction rather than message-only imbalance
-- [ ] Add book slope, microprice, top-N imbalance, depletion and replenishment
+- [x] Correct L50 snapshot/delta local book reconstruction rather than message-only imbalance
+- [x] Add microprice and top-N imbalance
+- [ ] Add book slope, depletion and replenishment
 - [ ] Trade velocity, signed notional and large-trade detection
 - [ ] Liquidation burst features
 - [ ] Rolling OI delta windows
