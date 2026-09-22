@@ -62,9 +62,10 @@ This is the working queue for the hourly build automation. Each run should inspe
 
 ## H12–H14 — ML baseline
 
-- [ ] LightGBM/CatBoost meta-label model
-- [ ] TP-before-SL label
-- [ ] time-to-event labels
+- [x] LightGBM meta-label model
+- [x] TP-before-SL label
+- [x] time-to-event labels
+- [ ] CatBoost challenger baseline
 - [ ] purged chronological splits
 - [ ] Optuna research-only tuning
 - [ ] model artifact manifest
@@ -75,7 +76,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [x] Brier score + ECE metrics
 - [ ] uncertainty/disagreement features
 - [x] NO_TRADE threshold from validation
-- [ ] confidence bucket report
+- [x] confidence bucket report
 - [x] probability drift monitor
 
 ## H16–H18 — Self-evolution
