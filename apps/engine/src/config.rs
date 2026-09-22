@@ -12,6 +12,7 @@ pub struct Config {
     pub max_spread_bps: f64,
     pub stale_feed_ms: u64,
     pub journal_path: PathBuf,
+    pub market_record_path: PathBuf,
 }
 
 impl Config {
@@ -31,6 +32,9 @@ impl Config {
             stale_feed_ms: parse("A6_STALE_FEED_MS", 3500),
             journal_path: env::var("A6_JOURNAL_PATH")
                 .unwrap_or_else(|_| "data/journal.jsonl".into())
+                .into(),
+            market_record_path: env::var("A6_MARKET_RECORD_PATH")
+                .unwrap_or_else(|_| "data/market-events.jsonl".into())
                 .into(),
         })
     }
