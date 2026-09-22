@@ -3,6 +3,7 @@ mod bybit;
 mod bybit_record;
 mod config;
 mod journal;
+mod live_recorder;
 mod microstructure;
 mod outcomes;
 mod replay;
