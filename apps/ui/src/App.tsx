@@ -63,6 +63,8 @@ function useAudioAlarms() {
       feed_recovered: [740, 0.10, 2],
       drift: [260, 0.22, 4],
       model_promoted: [1174, 0.13, 4],
+      reversed: [392, 0.24, 4],
+      invalidated: [294, 0.20, 3],
     };
 
     const [frequency, duration, count] = patterns[kind];
@@ -70,7 +72,7 @@ function useAudioAlarms() {
       const start = audio.currentTime + i * (duration + 0.07);
       const oscillator = audio.createOscillator();
       const gain = audio.createGain();
-      oscillator.type = kind === "stop_loss" || kind === "feed_stale" ? "sawtooth" : "sine";
+      oscillator.type = kind === "stop_loss" || kind === "feed_stale" || kind === "reversed" || kind === "invalidated" ? "sawtooth" : "sine";
       oscillator.frequency.setValueAtTime(frequency, start);
       gain.gain.setValueAtTime(0.0001, start);
       gain.gain.exponentialRampToValueAtTime(0.22, start + 0.015);
