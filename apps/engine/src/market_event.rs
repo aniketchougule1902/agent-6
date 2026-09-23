@@ -36,6 +36,14 @@ pub fn apply_batch(
 
 /// Pure state-mutation boundary shared by live ingestion and deterministic replay.
 /// Validation happens before mutation so a malformed batch is zero-state-mutation.
+pub fn validate_batch(events: &[NormalizedMarketEvent], expected_symbol: &str) -> Result<()> {
+    ensure!(!events.is_empty(), "normalized market-event batch is empty");
+    for event in events {
+        validate_event(event, expected_symbol)?;
+    }
+    Ok(())
+}
+
 pub(crate) fn apply_batch_to_internal(
     inner: &mut InternalState,
     expected_symbol: &str,
@@ -43,9 +51,7 @@ pub(crate) fn apply_batch_to_internal(
     processing_now_ms: u64,
     stale_feed_ms: u64,
 ) -> Result<Vec<EngineEvent>> {
-    for event in events {
-        validate_event(event, expected_symbol)?;
-    }
+    validate_batch(events, expected_symbol)?;
 
     let mut lifecycle_events = Vec::new();
     for event in events {
