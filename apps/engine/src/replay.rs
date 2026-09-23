@@ -35,8 +35,17 @@ impl MarketRecorder {
         Ok(Self { path, writer: BufWriter::new(file) })
     }
     pub fn append(&mut self, event: &NormalizedMarketEvent) -> Result<()> {
-        serde_json::to_writer(&mut self.writer, event)?;
-        self.writer.write_all(b"\n")?;
+        self.append_batch(std::slice::from_ref(event))
+    }
+
+    /// Persist a validated batch with a single buffered flush. This keeps large
+    /// bootstrap snapshots from monopolizing the shared recorder on one fsync-like
+    /// flush per candle while preserving event ordering within the batch.
+    pub fn append_batch(&mut self, events: &[NormalizedMarketEvent]) -> Result<()> {
+        for event in events {
+            serde_json::to_writer(&mut self.writer, event)?;
+            self.writer.write_all(b"\n")?;
+        }
         self.writer.flush()?;
         Ok(())
     }
