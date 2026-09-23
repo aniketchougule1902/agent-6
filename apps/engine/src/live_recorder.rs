@@ -4,7 +4,8 @@ use crate::{
 };
 use anyhow::{bail, Result};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Copy, Default)]
 struct BookCursor {
@@ -82,6 +83,15 @@ impl AcceptedMarketRecorder {
         })
     }
 
+    /// Start a fresh single-symbol replay session while preserving the previous
+    /// active recording beside it. This prevents events from different symbols
+    /// or process lifetimes being timestamp-sorted into one synthetic replay.
+    pub fn start_session(path: impl AsRef<Path>, label: &str) -> Result<(Self, Option<PathBuf>)> {
+        let path = path.as_ref();
+        let archived = archive_existing(path, label)?;
+        Ok((Self::open(path)?, archived))
+    }
+
     pub fn append(&mut self, event: &NormalizedMarketEvent) -> Result<()> {
         self.gate.accept(event)?;
         self.recorder.append(event)
@@ -118,6 +128,32 @@ impl AcceptedMarketRecorder {
     pub fn reset_symbol(&mut self, symbol: &str) {
         self.gate.reset_symbol(symbol);
     }
+}
+
+fn archive_existing(path: &Path, label: &str) -> Result<Option<PathBuf>> {
+    if !path.exists() || std::fs::metadata(path)?.len() == 0 {
+        return Ok(None);
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let stem = path.file_stem().and_then(|x| x.to_str()).unwrap_or("market-events");
+    let extension = path.extension().and_then(|x| x.to_str()).unwrap_or("jsonl");
+    let safe_label: String = label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    let mut archive = parent.join(format!("{stem}.session-{nonce}-{safe_label}.{extension}"));
+    let mut suffix = 0_u32;
+    while archive.exists() {
+        suffix += 1;
+        archive = parent.join(format!("{stem}.session-{nonce}-{safe_label}-{suffix}.{extension}"));
+    }
+    std::fs::rename(path, &archive)?;
+    Ok(Some(archive))
 }
 
 #[cfg(test)]
@@ -191,6 +227,21 @@ mod tests {
         assert!(gate.accept(&book(10, 101, false)).is_err());
         let mut restored = before;
         assert!(restored.accept(&book(11, 101, false)).is_ok());
+    }
+
+    #[test]
+    fn start_session_archives_previous_recording_and_opens_clean_file() {
+        let path = temp_recording_path();
+        fs::write(&path, b"old-session\n").unwrap();
+        let (mut recorder, archived) = AcceptedMarketRecorder::start_session(&path, "BTCUSDT").unwrap();
+        let archived = archived.expect("previous session should be archived");
+        assert_eq!(fs::read(&archived).unwrap(), b"old-session\n");
+        assert_eq!(fs::metadata(&path).unwrap().len(), 0);
+
+        recorder.append(&book(10, 100, true)).unwrap();
+        assert!(fs::metadata(&path).unwrap().len() > 0);
+        fs::remove_file(path).unwrap();
+        fs::remove_file(archived).unwrap();
     }
 
     #[test]
