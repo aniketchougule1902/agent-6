@@ -87,26 +87,32 @@ impl AcceptedMarketRecorder {
         self.recorder.append(event)
     }
 
-    /// Normalize and admit one complete Bybit websocket payload as a batch.
+    /// Admit one already-normalized exchange payload as an atomic batch.
     ///
     /// Validation runs against a cloned gate first, so if any event in the payload
     /// violates feed integrity, none of that payload is written and the live gate
-    /// cursor is unchanged. This is especially important for batched exchange data.
-    pub fn append_bybit_message(&mut self, text: &str) -> Result<usize> {
-        let events = normalize_message(text);
+    /// cursor is unchanged. The caller can then apply these exact same typed events
+    /// to live state, which is also the deterministic replay boundary.
+    pub fn append_batch(&mut self, events: &[NormalizedMarketEvent]) -> Result<usize> {
         if events.is_empty() {
             return Ok(0);
         }
 
         let mut candidate_gate = self.gate.clone();
-        for event in &events {
+        for event in events {
             candidate_gate.accept(event)?;
         }
-        for event in &events {
+        for event in events {
             self.recorder.append(event)?;
         }
         self.gate = candidate_gate;
         Ok(events.len())
+    }
+
+    /// Compatibility helper for tests/tools that still start from raw Bybit JSON.
+    pub fn append_bybit_message(&mut self, text: &str) -> Result<usize> {
+        let events = normalize_message(text);
+        self.append_batch(&events)
     }
 
     pub fn reset_symbol(&mut self, symbol: &str) {
