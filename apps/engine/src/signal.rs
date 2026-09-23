@@ -30,11 +30,9 @@ pub fn evaluate_once(
     state: &AppState,
     now: u64,
     market: &runtime::RuntimeMarketConfig,
-    tick_size: Option<f64>,
 ) -> Vec<EngineEvent> {
-    let tick_size = crate::catalog::tick_size(&market.symbol);
     let mut inner = state.inner.write();
-    evaluate_internal(&mut inner, &state.config, now, market, tick_size)
+    evaluate_internal(&mut inner, &state.config, now, market)
 }
 
 /// Pure production decision core shared by the live loop and replay. It mutates
@@ -102,10 +100,10 @@ pub(crate) fn evaluate_internal(
                     }
                 }
                 if analysis.blockers.is_empty() {
-                    if let Some(signal)=build_signal(config,&features,analysis,&market.symbol,now,inner.model.as_ref(),tick_size) {
+                    if let Some(signal)=build_signal(config,&features,analysis,&market.symbol,now,inner.model.as_ref()) {
                         if !repeated {
                             let (admit, transition) = prepare_signal_transition(
-                                inner,
+                                &mut inner,
                                 &signal,
                                 features.last_price,
                                 now,
@@ -232,7 +230,7 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     })
 }
 
-fn build_signal(config:&Config, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64, model:Option<&crate::model::ModelEvaluator>, tick_size:Option<f64>) -> Option<TradeSignal> {
+fn build_signal(config:&Config, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64, model:Option<&crate::model::ModelEvaluator>) -> Option<TradeSignal> {
     let price=f.last_price;
     let side=if a.bias=="long" {Side::Long} else {Side::Short};
     let direction=if a.bias=="long" {1.0} else {-1.0};
@@ -242,7 +240,7 @@ fn build_signal(config:&Config, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol
     let rr=config.min_rr.max(2.5);
     if !cost.is_finite() || cost<0.0 || risk>a.atr14*3.0 || risk<cost*1.25
         || (risk*rr-cost)/(risk+cost)<config.min_rr {return None;}
-    let tick=tick_size.filter(|value| value.is_finite() && *value > 0.0)?;
+    let tick=crate::catalog::tick_size(symbol)?;
     let (stop_loss,tp1,tp2)=rounded_levels(price,direction,risk,rr,tick)?;
     let actual_risk=(price-stop_loss).abs();
     let actual_reward=(tp2-price).abs();
