@@ -437,6 +437,7 @@ function LiveApp() {
 
   const signals=snapshot.timeframe_signals??[];
   const openSetups=signals.filter(isOpenSetup);
+  const signalHistory=(snapshot.signal_history??[]).slice().reverse().slice(0,8);
   const displayedSetup=selectSetup(signals,timeframe,setupFocus);
   const chartSnapshot={...snapshot,active_signal:displayedSetup};
   const a = snapshot.analyses?.find(item => item.timeframe === timeframe);
@@ -503,6 +504,16 @@ function LiveApp() {
         <label>Display setup <select aria-label="Display setup" value={signals.some(s=>s.timeframe===setupFocus)?setupFocus:"auto"} onChange={e=>setSetupFocus(e.target.value)}><option value="auto">Auto: prefer open setup</option>{signals.map(s=><option key={s.id} value={s.timeframe}>{s.timeframe}m {s.side.toUpperCase()} / {s.status.replaceAll('_',' ')}</option>)}</select></label>
         {displayedSetup&&<span className="setup-badge">{displayedSetup.timeframe}m {displayedSetup.side.toUpperCase()} | {isOpenSetup(displayedSetup)?'TRACKING':'COMPLETED'}</span>}
       </section>
+      {signalHistory.length>0&&<section className="panel event-panel" aria-label="Recent setup lifecycle">
+        <div className="eyebrow">RECENT SETUP HISTORY</div>
+        <div className="events">
+          {signalHistory.map(signal=><div className="event" key={`${signal.id}-${signal.last_event_ms}-${signal.status}`}>
+            <time>{new Date(signal.last_event_ms||signal.created_at_ms).toLocaleTimeString()}</time>
+            <strong>{signal.timeframe}m {signal.side.toUpperCase()} · {signal.status.replaceAll("_"," ").toUpperCase()}</strong>
+            <span>{signal.status==="reversed"||signal.status==="invalidated"?signal.invalidation:`Entry ${price(signal.entry_low)} · observed exit ${signal.observed_exit_price==null?"—":price(signal.observed_exit_price)}`}</span>
+          </div>)}
+        </div>
+      </section>}
       <section className="timeframe-board" aria-label="All scalping timeframes">
         {(["1", "3", "5", "15"] as Timeframe[]).map(tf => {
           const analysis = snapshot.analyses?.find(item => item.timeframe === tf);
