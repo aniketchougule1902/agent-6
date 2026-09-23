@@ -72,7 +72,8 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 - [x] Raw normalized market-event recorder
 - [x] Connect recorder admission to the production live websocket path
 - [x] Deterministic replay clock
-- [ ] Re-run live Rust feature/signal code against replay
+- [x] Capture validated REST bootstrap klines in the normalized session recording
+- [x] Re-run live Rust feature/signal code against replay
 - [x] MFE/MAE and time-to-target outcome labeling
 
 ## H8–H10 — Realistic simulator
@@ -83,6 +84,7 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 - [x] stop gaps and partial fills
 - [x] queue/fill approximation
 - [x] deterministic seeded stress scenarios
+- [ ] Drive simulator from normalized production replay and emit after-cost outcome report
 
 ## H10–H12 — Research feature factory
 
