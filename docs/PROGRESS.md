@@ -131,6 +131,23 @@
 
 - Previous head Actions run `35791057802` is confirmed green.
 - Artifact code commit: `13080c632982f8180b49947e3e23ff14d44a4829`; tests: `626af434b8ad0f33be27408de56e73d16eef969c`.
+- Actions run `35796290639` passed for `a2b7502bc0b014cd52134e35c9ec849bfbcc4632`.
+
+## 2026-09-23 — CatBoost challenger checkpoint
+
+### Completed
+
+- Added a deterministic research-only CatBoost classifier challenger with chronological held-out validation and optional boundary embargo.
+- Disabled CatBoost file writes, bootstrap randomness and multi-thread nondeterminism; fixed the random seed for reproducible challenger probabilities.
+- Added AUC, Brier and log-loss reporting plus fail-closed validation for malformed/non-finite feature matrices, non-binary labels and invalid split settings.
+- Added tests for chronological split accounting, bounded probabilities, deterministic repeated fits and malformed inputs.
+- Added CatBoost to the research dependency manifest and marked the roadmap baseline complete.
+- This challenger cannot promote itself or enable real-money execution.
+
+### Validation
+
+- Previous head Actions run `35796290639` is confirmed green.
+- Code commit: `8a44c678ae04b551bcc92b429dba2fd021ef2227`; dependency commit: `802134d7825ac55998dd4c15ed792d5b39faf598`; tests: `b710df567a422d771a45ac857ea54f3235c54659`.
 - New-head CI pending; do not claim this checkpoint green until Actions completes.
 
 ### Current highest-priority gaps
@@ -139,4 +156,4 @@
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add CatBoost challenger work, then champion/challenger registry and rollback.
+5. Add champion/challenger registry and rollback after challenger validation.
