@@ -245,11 +245,21 @@ async fn run_session(
                 match message {
                     Message::Text(text) => {
                         if text.contains("\"topic\"") {
-                            match recorder.append_bybit_message(&text) {
-                                Ok(0) => warn!("unrecognized market payload ignored"),
-                                Ok(_) => handle_message(state, &text),
-                                Err(error) => return Err(error.context("market payload rejected before live-state mutation")),
+                            let events = crate::bybit_record::normalize_message(&text);
+                            if events.is_empty() {
+                                warn!("unrecognized market payload ignored");
+                                continue;
                             }
+                            crate::market_event::validate_batch(&events, &market.symbol)
+                                .context("market payload failed typed validation before recording")?;
+                            recorder.append_batch(&events)
+                                .context("market payload rejected before live-state mutation")?;
+                            crate::market_event::apply_batch(
+                                state,
+                                &market.symbol,
+                                &events,
+                                now_ms(),
+                            ).context("accepted market payload failed typed state application")?;
                         }
                     },
                     Message::Ping(payload) => write.send(Message::Pong(payload)).await?,
