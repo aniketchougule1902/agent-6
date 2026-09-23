@@ -1,4 +1,4 @@
-﻿//! A deterministic software demonstration. Never published to the live journal.
+//! A deterministic software demonstration. Never published to the live journal.
 use crate::{signal,simulator::{try_simulate_fill,FillRequest,LiquidityRole,SimulationConfig},state::InternalState,types::*};
 use serde::Serialize;
 #[derive(Serialize)]
@@ -33,7 +33,7 @@ pub fn run(win:bool)->anyhow::Result<Demo>{
  let fees=entry_fill.fee_quote+exit_fills.iter().map(|f|f.fee_quote).sum::<f64>();
  let final_signal=inner.signals.remove("1").unwrap();
  let flags=events.iter().filter_map(crate::flags::from_event).collect();
- let snapshot=EngineSnapshot{symbol:"DEMOUSDT".into(),timeframe:"1".into(),market_generation:0,connected:false,feed_stale:false,feed_age_ms:0,last_price:Some(path[4]),mark_price:None,index_price:None,features:None,active_signal:Some(final_signal.clone()),timeframe_signals:vec![final_signal],analyses:vec![],chart_flags:flags,candles_1m:candles,candles_3m:vec![],candles_5m:vec![],candles_15m:vec![],updated_at_ms:now};
+ let snapshot=EngineSnapshot{symbol:"DEMOUSDT".into(),timeframe:"1".into(),market_generation:0,connected:false,feed_stale:false,feed_age_ms:0,last_price:Some(path[4]),mark_price:None,index_price:None,features:None,active_signal:Some(final_signal.clone()),timeframe_signals:vec![final_signal],analyses:vec![],chart_flags:flags,candles_1m:candles,candles_3m:vec![],candles_5m:vec![],candles_15m:vec![],paper_balance:1000.0,paper_equity:1000.0,paper_unrealized:0.0,paper_realized:0.0,paper_win_rate:None,paper_profit_factor:None,paper_max_drawdown:0.0,paper_fees:0.0,paper_open_count:0,paper_closed_count:0,updated_at_ms:now};
  Ok(Demo{disclosure:format!("SCRIPTED {} DEMO — synthetic market path chosen in advance. Tests software behavior, not predictive accuracy. No live orders or journal entries.",if win{"WIN"}else{"LOSS"}),snapshot,events,entry_fill,exit_fills,gross_pnl,fees,net_pnl:gross_pnl-fees,quantity:10.0})
 }
 #[cfg(test)]mod tests{

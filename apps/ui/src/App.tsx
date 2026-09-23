@@ -23,6 +23,7 @@ import type { RuntimeMarketUpdate } from "./generated/RuntimeMarketUpdate";
 import { overlayData } from "./chartIndicators";
 import { CoinIcon, ServiceBar, SymbolSearch, useCatalog, price } from "./MarketTools";
 import { RiskPlanner } from "./RiskPlanner";
+import { PaperTrading } from "./PaperTrading";
 import { drawSetup } from "./drawSetup";
 import { isOpenSetup, selectSetup } from "./setupSelection";
 
@@ -521,6 +522,7 @@ function LiveApp() {
         <div className="right-column">
           <SignalCard signal={displayedSetup} stale={!healthy} chartTimeframe={timeframe} />
           <RiskPlanner signal={displayedSetup} instrument={instrument}/>
+          <PaperTrading snapshot={snapshot} signal={displayedSetup}/>
           <details className="feature-details"><summary>Order flow & microstructure</summary>
 
           <section className="panel">

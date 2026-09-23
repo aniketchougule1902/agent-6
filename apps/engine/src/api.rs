@@ -40,6 +40,7 @@ async fn instruments(State(state): State<AppState>) -> Json<crate::catalog::Cata
 
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let snapshot = state.snapshot();
+    let jev_responded = state.inner.read().jev_responded;
     Json(json!({
         "ok": snapshot.connected && !snapshot.feed_stale && snapshot.features.is_some(),
         "connected": snapshot.connected,
@@ -47,9 +48,9 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "market_feed": if snapshot.connected && !snapshot.feed_stale {"live"} else {"unavailable"},
             "signal_engine": if snapshot.analyses.len()==4 && !snapshot.feed_stale {"evaluating"} else {"warming / halted"},
             "history": if snapshot.analyses.len()==4 {"ready"} else {"loading"},
-            "jev": if std::env::var("TYPESAFE_API_KEY").is_ok_and(|v| !v.trim().is_empty()) {"configured; review on signal"} else {"not configured"},
+            "jev": if jev_responded {"active"} else if std::env::var("TYPESAFE_API_KEY").is_ok_and(|v| !v.trim().is_empty()) {"configured"} else {"not configured"},
             "execution": "paper only",
-            "calibrated_model": "not deployed"
+            "calibrated_model": "paper scoring"
         },
         "symbol": snapshot.symbol,
         "updated_at_ms": snapshot.updated_at_ms

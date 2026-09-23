@@ -61,6 +61,7 @@ pub(crate) struct InternalState {
     pub analyses: Vec<TimeframeAnalysis>,
     pub admitted_candles: HashMap<String, u64>,
     pub last_signal_at_ms: u64,
+    pub jev_responded: bool,
     pub updated_at_ms: u64,
 }
 
@@ -102,6 +103,7 @@ impl InternalState {
             analyses: Vec::new(),
             admitted_candles: HashMap::new(),
             last_signal_at_ms: 0,
+            jev_responded: false,
             updated_at_ms: now,
         }
     }
@@ -236,6 +238,9 @@ impl AppState {
         if let Some(flag) = crate::flags::from_event(&event) {
             crate::flags::append(&mut self.chart_flags.write(), flag);
         }
+        if event.event_type == "jev_review" {
+            self.inner.write().jev_responded = true;
+        }
         self.journal.append(&event);
         if event.alert.is_some() {
             print!("\x07");
@@ -254,6 +259,7 @@ impl AppState {
         };
         let now = now_ms();
         let market = runtime::current();
+        let pv = self.paper.lock().view();
         EngineSnapshot {
             symbol: market.symbol.clone(),
             timeframe: market.timeframe.clone(),
@@ -273,6 +279,16 @@ impl AppState {
             candles_3m: bars("3"),
             candles_5m: bars("5"),
             candles_15m: bars("15"),
+            paper_balance: pv.account.balance,
+            paper_equity: pv.equity,
+            paper_unrealized: pv.unrealized,
+            paper_realized: pv.realized,
+            paper_win_rate: pv.win_rate,
+            paper_profit_factor: pv.profit_factor,
+            paper_max_drawdown: pv.max_closed_drawdown,
+            paper_fees: pv.fees,
+            paper_open_count: pv.account.positions.iter().filter(|p| p.remaining > 0.0).count(),
+            paper_closed_count: pv.closed_trades,
             updated_at_ms: s.updated_at_ms,
         }
     }
