@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, TS, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 #[ts(export)]
 pub enum Side {
@@ -18,6 +18,8 @@ pub enum SignalStatus {
     Tp2Hit,
     StopLossHit,
     Expired,
+    Reversed,
+    Invalidated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -35,6 +37,8 @@ pub enum AlertKind {
     FeedRecovered,
     Drift,
     ModelPromoted,
+    Reversed,
+    Invalidated,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -185,6 +189,7 @@ pub struct EngineSnapshot {
     pub features: Option<FeatureSnapshot>,
     pub active_signal: Option<TradeSignal>,
     pub timeframe_signals: Vec<TradeSignal>,
+    pub signal_history: Vec<TradeSignal>,
     pub analyses: Vec<TimeframeAnalysis>,
     pub chart_flags: Vec<ChartFlag>,
     pub candles_1m: Vec<Candle>,
