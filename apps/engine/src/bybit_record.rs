@@ -17,6 +17,8 @@ pub fn normalize_message(text: &str) -> Vec<NormalizedMarketEvent> {
                     ts_ms: item.get("timestamp").and_then(parse_u64).unwrap_or(root_ts),
                     symbol: symbol.clone(),
                     interval: item.get("interval").and_then(Value::as_str).unwrap_or("1").to_string(),
+                    start_ms: item.get("start").and_then(parse_u64).unwrap_or_default(),
+                    end_ms: item.get("end").and_then(parse_u64).unwrap_or_default(),
                     open: item.get("open").and_then(parse_f64).unwrap_or_default(),
                     high: item.get("high").and_then(parse_f64).unwrap_or_default(),
                     low: item.get("low").and_then(parse_f64).unwrap_or_default(),
@@ -107,6 +109,14 @@ mod tests {
         assert_eq!((*ts_ms, symbol.as_str(), *update_id, *seq, *snapshot), (999, "BTCUSDT", 42, 77, false));
         assert_eq!(bids, &vec![(100.0, 0.0)]);
         assert_eq!(asks, &vec![(101.0, 2.5)]);
+    }
+
+    #[test]
+    fn normalizes_kline_with_exact_candle_bounds() {
+        let events = normalize_message(r#"{\"topic\":\"kline.1.BTCUSDT\",\"ts\":1700000060000,\"data\":[{\"start\":1700000000000,\"end\":1700000059999,\"timestamp\":1700000050000,\"interval\":\"1\",\"open\":\"100\",\"high\":\"102\",\"low\":\"99\",\"close\":\"101\",\"volume\":\"12\",\"turnover\":\"1212\",\"confirm\":true}]}"#);
+        assert_eq!(events.len(), 1);
+        let NormalizedMarketEvent::Kline { ts_ms, start_ms, end_ms, interval, confirmed, .. } = &events[0] else { panic!("wrong event") };
+        assert_eq!((*ts_ms, *start_ms, *end_ms, interval.as_str(), *confirmed), (1_700_000_050_000, 1_700_000_000_000, 1_700_000_059_999, "1", true));
     }
 
     #[test]
