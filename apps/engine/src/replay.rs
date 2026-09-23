@@ -14,7 +14,7 @@ pub enum NormalizedMarketEvent {
     OrderBook { ts_ms: u64, symbol: String, update_id: u64, seq: u64, snapshot: bool, bids: Vec<(f64, f64)>, asks: Vec<(f64, f64)> },
     Ticker { ts_ms: u64, symbol: String, last_price: Option<f64>, mark_price: Option<f64>, index_price: Option<f64>, open_interest: Option<f64>, funding_rate: Option<f64> },
     Liquidation { ts_ms: u64, symbol: String, price: f64, qty: f64, side: String },
-    Kline { ts_ms: u64, symbol: String, interval: String, open: f64, high: f64, low: f64, close: f64, volume: f64, turnover: f64, confirmed: bool },
+    Kline { ts_ms: u64, symbol: String, interval: String, #[serde(default)] start_ms: u64, #[serde(default)] end_ms: u64, open: f64, high: f64, low: f64, close: f64, volume: f64, turnover: f64, confirmed: bool },
 }
 
 impl NormalizedMarketEvent {
@@ -63,6 +63,18 @@ struct BookIntegrity { seen_snapshot: bool, last_seq: u64, last_update_id: u64 }
 pub fn validate_feed_integrity(events: &[NormalizedMarketEvent]) -> Result<()> {
     let mut books: HashMap<&str, BookIntegrity> = HashMap::new();
     for (index, event) in events.iter().enumerate() {
+        if let NormalizedMarketEvent::Kline { symbol, interval, start_ms, end_ms, open, high, low, close, volume, turnover, .. } = event {
+            if *start_ms == 0 || *end_ms < *start_ms {
+                bail!("kline missing/invalid candle bounds at event {} for {} {}m", index + 1, symbol, interval);
+            }
+            if ![*open, *high, *low, *close, *volume, *turnover].iter().all(|v| v.is_finite())
+                || *open <= 0.0 || *high <= 0.0 || *low <= 0.0 || *close <= 0.0
+                || *volume < 0.0 || *turnover < 0.0 || *high < open.max(*close) || *low > open.min(*close)
+            {
+                bail!("invalid kline values at event {} for {} {}m", index + 1, symbol, interval);
+            }
+            continue;
+        }
         let NormalizedMarketEvent::OrderBook { symbol, update_id, seq, snapshot, .. } = event else { continue; };
         let state = books.entry(symbol.as_str()).or_default();
         if *snapshot || *update_id == 1 {
@@ -142,4 +154,23 @@ mod tests {
     fn integrity_accepts_snapshot_then_monotonic_deltas() { assert!(validate_feed_integrity(&[book(10, 1, true), book(11, 2, false), book(12, 3, false)]).is_ok()); }
     #[test]
     fn strict_replay_refuses_corrupt_book_stream() { assert!(DeterministicReplay::try_new(vec![book(3, 3, false)]).is_err()); }
+    #[test]
+    fn strict_replay_rejects_legacy_kline_without_candle_bounds() {
+        let event = NormalizedMarketEvent::Kline {
+            ts_ms: 1_700_000_000_000, symbol: "BTCUSDT".into(), interval: "1".into(),
+            start_ms: 0, end_ms: 0, open: 100.0, high: 101.0, low: 99.0, close: 100.5,
+            volume: 10.0, turnover: 1_005.0, confirmed: true,
+        };
+        assert!(DeterministicReplay::try_new(vec![event]).is_err());
+    }
+    #[test]
+    fn strict_replay_accepts_kline_with_exact_candle_bounds() {
+        let start_ms = 1_700_000_000_000;
+        let event = NormalizedMarketEvent::Kline {
+            ts_ms: start_ms + 30_000, symbol: "BTCUSDT".into(), interval: "1".into(),
+            start_ms, end_ms: start_ms + 59_999, open: 100.0, high: 101.0, low: 99.0, close: 100.5,
+            volume: 10.0, turnover: 1_005.0, confirmed: true,
+        };
+        assert!(DeterministicReplay::try_new(vec![event]).is_ok());
+    }
 }
