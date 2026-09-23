@@ -1,4 +1,5 @@
 use crate::{
+    config::Config,
     runtime,
     state::{now_ms, AppState, InternalState},
     types::{
@@ -30,14 +31,24 @@ pub fn evaluate_once(
     now: u64,
     market: &runtime::RuntimeMarketConfig,
 ) -> Vec<EngineEvent> {
+    let mut inner = state.inner.write();
+    evaluate_internal(&mut inner, &state.config, now, market)
+}
+
+/// Pure production decision core shared by the live loop and replay. It mutates
+/// only typed in-memory state and returns lifecycle/signal events to its caller.
+pub(crate) fn evaluate_internal(
+    inner: &mut InternalState,
+    config: &Config,
+    now: u64,
+    market: &runtime::RuntimeMarketConfig,
+) -> Vec<EngineEvent> {
     let mut events = Vec::new();
-    {
-        let mut inner = state.inner.write();
         inner.prune_flows(now);
         let stale = !inner.connected
-            || now.saturating_sub(inner.last_market_event_ms) > state.config.stale_feed_ms
+            || now.saturating_sub(inner.last_market_event_ms) > config.stale_feed_ms
             || inner.orderbook_event_ms == 0
-            || now.saturating_sub(inner.orderbook_event_ms) > state.config.stale_feed_ms;
+            || now.saturating_sub(inner.orderbook_event_ms) > config.stale_feed_ms;
         if stale != inner.feed_stale {
             inner.feed_stale = stale;
             events.push(EngineEvent {
@@ -68,12 +79,12 @@ pub fn evaluate_once(
                 let flow = (features.trade_flow_imbalance + features.book_imbalance_top5) / 2.0;
                 analysis.quality = (0.8 * analysis.quality + 0.2 * (0.5 + 0.5 * direction * flow)).clamp(0.0,1.0);
                 if stale { analysis.blockers.push("Live feed is stale".into()); }
-                if features.spread_bps > state.config.max_spread_bps {analysis.blockers.push("Spread above limit".into());}
+                if features.spread_bps > config.max_spread_bps {analysis.blockers.push("Spread above limit".into());}
                 if direction * flow < -0.15 {analysis.blockers.push("Order flow opposes the setup".into());}
                 let higher = match analysis.timeframe.as_str() {"1"=>"3","3"=>"5","5"=>"15",_=>"5"};
                 if !biases.iter().any(|(tf,bias)| tf==higher && bias==&analysis.bias && bias!="neutral") {analysis.blockers.push("Companion timeframe does not confirm".into());}
                 if (features.last_price-analysis.close).abs()>analysis.atr14*0.75 {analysis.blockers.push("Live price moved too far from the closed candle".into());}
-                if analysis.quality < state.config.min_signal_score {analysis.blockers.push("Quality below configured threshold".into());}
+                if analysis.quality < config.min_signal_score {analysis.blockers.push("Quality below configured threshold".into());}
                 if analysis.atr14/features.last_price*10_000.0>150.0 {analysis.blockers.push("Abnormal volatility".into());}
                 let repeated=inner.admitted_candles.get(&analysis.timeframe)==Some(&analysis.candle_ms);
                 if analysis.blockers.is_empty() {
@@ -89,14 +100,14 @@ pub fn evaluate_once(
                     }
                 }
                 if analysis.blockers.is_empty() {
-                    if let Some(signal)=build_signal(&state,&features,analysis,&market.symbol,now,inner.model.as_ref()) {
+                    if let Some(signal)=build_signal(config,&features,analysis,&market.symbol,now,inner.model.as_ref()) {
                         if !repeated {
                             let (admit, transition) = prepare_signal_transition(
                                 &mut inner,
                                 &signal,
                                 features.last_price,
                                 now,
-                                state.config.signal_cooldown_secs.saturating_mul(1000),
+                                config.signal_cooldown_secs.saturating_mul(1000),
                             );
                             if let Some(event) = transition {
                                 events.push(event);
@@ -114,7 +125,6 @@ pub fn evaluate_once(
         inner.analyses=analyses;
         inner.active_signal=inner.signals.get(&market.timeframe).cloned();
         inner.updated_at_ms=now;
-    }
 
     events
 }
@@ -220,21 +230,21 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     })
 }
 
-fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64, model:Option<&crate::model::ModelEvaluator>) -> Option<TradeSignal> {
+fn build_signal(config:&Config, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64, model:Option<&crate::model::ModelEvaluator>) -> Option<TradeSignal> {
     let price=f.last_price;
     let side=if a.bias=="long" {Side::Long} else {Side::Short};
     let direction=if a.bias=="long" {1.0} else {-1.0};
     let anchor=if a.setup=="channel_breakout" {if direction>0.0 {a.resistance} else {a.support}} else {a.ema21};
     let risk=(direction*(price-anchor)+a.atr14*0.35).max(a.atr14*1.2).max(price*0.0008);
-    let cost=price*(state.config.round_trip_cost_bps+f.spread_bps)/10_000.0;
-    let rr=state.config.min_rr.max(2.5);
+    let cost=price*(config.round_trip_cost_bps+f.spread_bps)/10_000.0;
+    let rr=config.min_rr.max(2.5);
     if !cost.is_finite() || cost<0.0 || risk>a.atr14*3.0 || risk<cost*1.25
-        || (risk*rr-cost)/(risk+cost)<state.config.min_rr {return None;}
+        || (risk*rr-cost)/(risk+cost)<config.min_rr {return None;}
     let tick=crate::catalog::tick_size(symbol)?;
     let (stop_loss,tp1,tp2)=rounded_levels(price,direction,risk,rr,tick)?;
     let actual_risk=(price-stop_loss).abs();
     let actual_reward=(tp2-price).abs();
-    if (actual_reward-cost)/(actual_risk+cost)<state.config.min_rr {return None;}
+    if (actual_reward-cost)/(actual_risk+cost)<config.min_rr {return None;}
     let rr=actual_reward/actual_risk;
     if stop_loss<=0.0 || tp1<=0.0 || tp2<=0.0 {return None;}
 
@@ -257,7 +267,7 @@ fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbo
         format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),
         format!("Relative volume {:.2}x",a.relative_volume),
         "Companion timeframe and live flow checked".into(),
-        format!("Estimated round-trip costs {:.1} bps",state.config.round_trip_cost_bps+f.spread_bps),
+        format!("Estimated round-trip costs {:.1} bps",config.round_trip_cost_bps+f.spread_bps),
     ];
     reasons.extend(ml_reasons);
 
