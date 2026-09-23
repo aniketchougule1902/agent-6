@@ -9,7 +9,8 @@ dependencies = [
   "scikit-learn>=1.5",
   "lightgbm>=4.0",
   "catboost>=1.2",
-  "optuna>=4.0"
+  "optuna>=4.0",
+  "duckdb>=1.1"
 ]
 
 [tool.ruff]
