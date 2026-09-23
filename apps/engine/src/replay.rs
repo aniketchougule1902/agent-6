@@ -62,7 +62,30 @@ struct BookIntegrity { seen_snapshot: bool, last_seq: u64, last_update_id: u64 }
 /// Validation happens before timestamp sorting so source-order corruption is never hidden by replay.
 pub fn validate_feed_integrity(events: &[NormalizedMarketEvent]) -> Result<()> {
     let mut books: HashMap<&str, BookIntegrity> = HashMap::new();
+    let mut recording_symbol: Option<&str> = None;
     for (index, event) in events.iter().enumerate() {
+        let event_symbol = match event {
+            NormalizedMarketEvent::Trade { symbol, .. }
+            | NormalizedMarketEvent::OrderBook { symbol, .. }
+            | NormalizedMarketEvent::Ticker { symbol, .. }
+            | NormalizedMarketEvent::Liquidation { symbol, .. }
+            | NormalizedMarketEvent::Kline { symbol, .. } => symbol.as_str(),
+        };
+        if event_symbol.is_empty() {
+            bail!("empty symbol at event {}", index + 1);
+        }
+        if let Some(expected) = recording_symbol {
+            if event_symbol != expected {
+                bail!(
+                    "mixed-symbol recording is not replay-safe: event {} is {} but session started with {}",
+                    index + 1,
+                    event_symbol,
+                    expected
+                );
+            }
+        } else {
+            recording_symbol = Some(event_symbol);
+        }
         if let NormalizedMarketEvent::Kline { symbol, interval, start_ms, end_ms, open, high, low, close, volume, turnover, .. } = event {
             if *start_ms == 0 || *end_ms < *start_ms {
                 bail!("kline missing/invalid candle bounds at event {} for {} {}m", index + 1, symbol, interval);
@@ -146,6 +169,22 @@ mod tests {
         let event = NormalizedMarketEvent::OrderBook { ts_ms: 42, symbol: "ETHUSDT".into(), update_id: 7, seq: 9, snapshot: true, bids: vec![(100.0, 2.0)], asks: vec![(101.0, 3.0)] };
         let json = serde_json::to_string(&event).unwrap(); let decoded: NormalizedMarketEvent = serde_json::from_str(&json).unwrap(); assert_eq!(decoded, event);
     }
+    #[test]
+    fn strict_replay_rejects_mixed_symbol_recording() {
+        let events = vec![
+            trade(1_000, 100.0),
+            NormalizedMarketEvent::Trade {
+                ts_ms: 1_001,
+                symbol: "ETHUSDT".into(),
+                price: 2_000.0,
+                qty: 1.0,
+                side: "buy".into(),
+            },
+        ];
+        let error = DeterministicReplay::try_new(events).err().expect("mixed symbols must fail");
+        assert!(error.to_string().contains("mixed-symbol recording"));
+    }
+
     #[test]
     fn integrity_rejects_delta_before_snapshot() { assert!(validate_feed_integrity(&[book(2, 2, false)]).is_err()); }
     #[test]
