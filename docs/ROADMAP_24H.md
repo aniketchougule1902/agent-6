@@ -36,19 +36,19 @@ This is the working queue for the hourly build automation. Each run should inspe
 ## H6–H8 — Persistence and replay
 
 - [ ] Typed event store using Parquet/DuckDB
-- [ ] Raw normalized market-event recorder
-- [ ] Deterministic replay clock
+- [x] Raw normalized market-event recorder
+- [x] Deterministic replay clock
 - [ ] Re-run live Rust feature/signal code against replay
 - [x] MFE/MAE and time-to-target outcome labeling
 
 ## H8–H10 — Realistic simulator
 
-- [ ] Maker/taker fee model
-- [ ] spread + slippage model
-- [ ] order latency and decision latency
-- [ ] stop gaps and partial fills
-- [ ] queue/fill approximation
-- [ ] deterministic seeded stress scenarios
+- [x] Maker/taker fee model
+- [x] spread + slippage model
+- [x] order latency and decision latency
+- [x] stop gaps and partial fills
+- [x] queue/fill approximation
+- [x] deterministic seeded stress scenarios
 
 ## H10–H12 — Research feature factory
 
