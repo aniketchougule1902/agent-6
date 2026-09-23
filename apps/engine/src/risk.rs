@@ -97,7 +97,13 @@ mod tests {
 
     #[test]
     fn trips_daily_loss_past_threshold_and_latches() {
-        let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
+        // Keep drawdown deliberately looser than daily loss in this test so the
+        // two independent halt reasons cannot mask one another.
+        let daily_loss_limits = RiskLimits {
+            max_daily_loss_fraction: 0.05,
+            max_drawdown_fraction: 0.10,
+        };
+        let mut guard = SessionRiskCircuitBreaker::new(1000.0, daily_loss_limits).unwrap();
         assert_eq!(guard.observe_equity(951.0).unwrap(), None);
         assert_eq!(
             guard.observe_equity(949.0).unwrap(),
