@@ -7,6 +7,7 @@ mod live_recorder;
 mod microstructure;
 mod outcomes;
 mod replay;
+mod risk;
 mod runtime;
 mod signal;
 mod simulator;
