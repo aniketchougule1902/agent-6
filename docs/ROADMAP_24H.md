@@ -65,7 +65,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 - [x] LightGBM meta-label model
 - [x] TP-before-SL label
 - [x] time-to-event labels
-- [ ] CatBoost challenger baseline
+- [x] CatBoost challenger baseline
 - [x] purged chronological splits
 - [ ] Optuna research-only tuning
 - [x] model artifact manifest
