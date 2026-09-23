@@ -67,15 +67,22 @@
 
 - Added a strongly typed, deterministic `SessionRiskCircuitBreaker` for maximum session loss and peak-to-current drawdown limits.
 - The guard validates all limits/equity inputs, fails closed on non-finite/non-positive equity, and latches permanently after a breach so later recovery cannot silently re-enable signals.
-- Unit tests cover exact daily-loss boundary, peak-relative drawdown, latch behavior and malformed inputs. The module is compiled into the engine but is not yet wired into signal admission, so the roadmap risk-circuit-breaker item remains intentionally incomplete.
+- Unit tests cover threshold behavior, peak-relative drawdown, latch behavior and malformed inputs. The module is compiled into the engine but is not yet wired into signal admission, so the roadmap risk-circuit-breaker item remains intentionally incomplete.
 - Code commits: `3842cdd1853c537ffe81a7b10423d40915148047`, `89bb4e0df7515f3f04fc8f5608088786aee73aa9`.
+
+## 2026-09-23 — CI repair checkpoint
+
+- Actions run `35821339700` failed in the Rust test step after the risk-circuit-breaker foundation landed; all later CI stages were skipped.
+- Reworked the threshold assertions to avoid brittle floating-point equality at decimal boundaries while preserving the production `>=` halt semantics, and formatted the affected test literals.
+- Repair commit: `b8fa9b70017e1d31a59d00f7ef068b18e6489211`. Validation is pending the new main workflow run; this checkpoint is not claimed green until Actions passes.
 
 ### Current highest-priority gaps
 
-1. Invoke `append_bybit_message` from the production accepted websocket path; rejected stale/non-monotonic L50 payloads must remain zero-write before live state mutation.
-2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
-3. Add Parquet/DuckDB typed persistence.
-4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Wire the new session loss/drawdown circuit breaker into signal admission, then add the remaining risk halts.
+1. Restore CI green and confirm the risk circuit-breaker tests pass on GitHub Actions.
+2. Invoke `append_bybit_message` from the production accepted websocket path; rejected stale/non-monotonic L50 payloads must remain zero-write before live state mutation.
+3. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
+4. Add Parquet/DuckDB typed persistence.
+5. Drive the execution simulator from replay for end-to-end outcome evaluation.
+6. Wire the session loss/drawdown circuit breaker into signal admission, then add the remaining risk halts.
 
 Real-money autonomous execution remains absent/disabled.
