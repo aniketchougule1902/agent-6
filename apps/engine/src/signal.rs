@@ -60,8 +60,6 @@ pub async fn run_loop(state: AppState) {
                     if (features.last_price-analysis.close).abs()>analysis.atr14*0.75 {analysis.blockers.push("Live price moved too far from the closed candle".into());}
                     if analysis.quality < state.config.min_signal_score {analysis.blockers.push("Quality below configured threshold".into());}
                     if analysis.atr14/features.last_price*10_000.0>150.0 {analysis.blockers.push("Abnormal volatility".into());}
-                    let existing=inner.signals.get(&analysis.timeframe);
-                    let available=existing.is_none_or(|s| terminal(s) && now.saturating_sub(s.last_event_ms)>state.config.signal_cooldown_secs*1000);
                     let repeated=inner.admitted_candles.get(&analysis.timeframe)==Some(&analysis.candle_ms);
                     if analysis.blockers.is_empty() {
                         if let Some(ref model) = inner.model {
@@ -77,10 +75,22 @@ pub async fn run_loop(state: AppState) {
                     }
                     if analysis.blockers.is_empty() {
                         if let Some(signal)=build_signal(&state,&features,analysis,&market.symbol,now,inner.model.as_ref()) {
-                            if available && !repeated {
-                                inner.admitted_candles.insert(analysis.timeframe.clone(),analysis.candle_ms);
-                                inner.signals.insert(analysis.timeframe.clone(),signal.clone());
-                                events.push(EngineEvent {ts_ms:now,event_type:"signal".into(),alert:Some(AlertKind::Signal),message:format!("{} {}m {:?} paper setup; {} {:.0}%",signal.symbol,signal.timeframe,signal.side,if signal.calibrated {"calibrated prob"} else {"quality"},signal.confidence*100.0),signal:Some(signal)});
+                            if !repeated {
+                                let (admit, transition) = prepare_signal_transition(
+                                    &mut inner,
+                                    &signal,
+                                    features.last_price,
+                                    now,
+                                    state.config.signal_cooldown_secs.saturating_mul(1000),
+                                );
+                                if let Some(event) = transition {
+                                    events.push(event);
+                                }
+                                if admit {
+                                    inner.admitted_candles.insert(analysis.timeframe.clone(),analysis.candle_ms);
+                                    inner.signals.insert(analysis.timeframe.clone(),signal.clone());
+                                    events.push(EngineEvent {ts_ms:now,event_type:"signal".into(),alert:Some(AlertKind::Signal),message:format!("{} {}m {:?} paper setup; {} {:.0}%",signal.symbol,signal.timeframe,signal.side,if signal.calibrated {"calibrated prob"} else {"quality"},signal.confidence*100.0),signal:Some(signal)});
+                                }
                             }
                         } else { analysis.blockers.push("Estimated costs or stop geometry fail risk checks".into()); }
                     }
@@ -246,6 +256,61 @@ fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbo
     })
 }
 
+fn prepare_signal_transition(
+    inner: &mut InternalState,
+    candidate: &TradeSignal,
+    observed_price: f64,
+    now: u64,
+    cooldown_ms: u64,
+) -> (bool, Option<EngineEvent>) {
+    let Some(existing) = inner.signals.get(&candidate.timeframe).cloned() else {
+        return (true, None);
+    };
+
+    if terminal(&existing) {
+        if now.saturating_sub(existing.last_event_ms) > cooldown_ms {
+            inner.archive_signal(existing);
+            return (true, None);
+        }
+        return (false, None);
+    }
+
+    if existing.side == candidate.side {
+        return (false, None);
+    }
+
+    let mut reversed = existing;
+    reversed.status = SignalStatus::Reversed;
+    reversed.last_event_ms = now;
+    reversed.observed_exit_price = Some(observed_price);
+    reversed.invalidation = format!(
+        "Reversed explicitly at {:.10}: a new fully-admitted {:?} {}m setup replaced the prior {:?} thesis. Paper reference only.",
+        observed_price,
+        candidate.side,
+        candidate.timeframe,
+        reversed.side,
+    );
+    inner.archive_signal(reversed.clone());
+    (
+        true,
+        Some(EngineEvent {
+            ts_ms: now,
+            event_type: "reversed".into(),
+            alert: Some(AlertKind::Reversed),
+            message: format!(
+                "{} {}m {:?} setup explicitly reversed by new {:?} setup at {:.4}; old signal {} remains in history",
+                reversed.symbol,
+                reversed.timeframe,
+                reversed.side,
+                candidate.side,
+                observed_price,
+                reversed.id,
+            ),
+            signal: Some(reversed),
+        }),
+    )
+}
+
 fn stable_signal_id(symbol: &str, timeframe: &str, candle_ms: u64, side: &Side) -> String {
     let side = if matches!(side, Side::Long) { "long" } else { "short" };
     format!("{symbol}:{timeframe}:{candle_ms}:{side}")
@@ -263,7 +328,14 @@ fn rounded_levels(price:f64,direction:f64,risk:f64,rr:f64,tick:f64)->Option<(f64
 }
 
 fn terminal(signal:&TradeSignal) -> bool {
-    matches!(signal.status,SignalStatus::Tp2Hit|SignalStatus::StopLossHit|SignalStatus::Expired)
+    matches!(
+        signal.status,
+        SignalStatus::Tp2Hit
+            | SignalStatus::StopLossHit
+            | SignalStatus::Expired
+            | SignalStatus::Reversed
+            | SignalStatus::Invalidated
+    )
 }
 fn hold_ms(timeframe:&str) -> u64 {timeframe.parse::<u64>().unwrap_or(1).saturating_mul(4).clamp(5,60)*60_000}
 
@@ -477,6 +549,77 @@ fn signed_unit(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_signal(id: &str, side: Side, status: SignalStatus, last_event_ms: u64) -> TradeSignal {
+        TradeSignal {
+            id: id.into(),
+            symbol: "BTCUSDT".into(),
+            timeframe: "1".into(),
+            side,
+            status,
+            created_at_ms: 1_000,
+            entry_low: 100.0,
+            entry_high: 100.0,
+            stop_loss: 99.0,
+            tp1: 101.0,
+            tp2: 102.5,
+            risk_reward_tp2: 2.5,
+            confidence: 0.7,
+            calibrated: false,
+            invalidation: "original".into(),
+            reasons: vec![],
+            last_event_ms,
+            observed_exit_price: None,
+        }
+    }
+
+    #[test]
+    fn opposite_admitted_candidate_explicitly_reverses_and_archives_old_signal() {
+        let mut inner = InternalState::new();
+        inner.signals.insert(
+            "1".into(),
+            test_signal("old", Side::Long, SignalStatus::Active, 1_000),
+        );
+        let candidate = test_signal("new", Side::Short, SignalStatus::Active, 2_000);
+        let (admit, event) = prepare_signal_transition(&mut inner, &candidate, 99.5, 2_000, 30_000);
+        assert!(admit);
+        let event = event.expect("reversal event");
+        assert_eq!(event.event_type, "reversed");
+        assert_eq!(event.signal.as_ref().unwrap().status, SignalStatus::Reversed);
+        assert_eq!(inner.signal_history.len(), 1);
+        assert_eq!(inner.signal_history.back().unwrap().id, "old");
+        assert_eq!(inner.signal_history.back().unwrap().observed_exit_price, Some(99.5));
+    }
+
+    #[test]
+    fn same_side_candidate_does_not_replace_active_signal() {
+        let mut inner = InternalState::new();
+        inner.signals.insert(
+            "1".into(),
+            test_signal("old", Side::Long, SignalStatus::Active, 1_000),
+        );
+        let candidate = test_signal("new", Side::Long, SignalStatus::Active, 2_000);
+        let (admit, event) = prepare_signal_transition(&mut inner, &candidate, 100.5, 2_000, 30_000);
+        assert!(!admit);
+        assert!(event.is_none());
+        assert!(inner.signal_history.is_empty());
+        assert_eq!(inner.signals["1"].id, "old");
+    }
+
+    #[test]
+    fn terminal_signal_is_archived_only_after_cooldown_before_replacement() {
+        let mut inner = InternalState::new();
+        inner.signals.insert(
+            "1".into(),
+            test_signal("old", Side::Long, SignalStatus::StopLossHit, 10_000),
+        );
+        let candidate = test_signal("new", Side::Short, SignalStatus::Active, 20_000);
+        let (early, _) = prepare_signal_transition(&mut inner, &candidate, 99.0, 20_000, 30_000);
+        assert!(!early);
+        let (late, _) = prepare_signal_transition(&mut inner, &candidate, 99.0, 41_000, 30_000);
+        assert!(late);
+        assert_eq!(inner.signal_history.back().unwrap().id, "old");
+    }
 
     #[test]
     fn signal_identity_is_stable_for_same_entry_evidence() {
