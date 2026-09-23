@@ -105,7 +105,28 @@ async fn update_market(
     })?;
 
     if next.symbol != previous.symbol {
-        state.inner.write().reset_market();
+        let now = crate::state::now_ms();
+        let invalidated = {
+            let mut inner = state.inner.write();
+            let invalidated = inner.invalidate_market_signals(
+                now,
+                &format!("Market changed from {} to {}.", previous.symbol, next.symbol),
+            );
+            inner.reset_market();
+            invalidated
+        };
+        for signal in invalidated {
+            state.publish(crate::types::EngineEvent {
+                ts_ms: now,
+                event_type: "invalidated".into(),
+                alert: Some(crate::types::AlertKind::Invalidated),
+                message: format!(
+                    "{} {}m {:?} setup invalidated because the selected market changed; old signal {} remains in history",
+                    signal.symbol, signal.timeframe, signal.side, signal.id
+                ),
+                signal: Some(signal),
+            });
+        }
     } else if next.timeframe != previous.timeframe {
         state.inner.write().reset_signal_context();
     }
