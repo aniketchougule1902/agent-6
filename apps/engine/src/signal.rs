@@ -105,7 +105,7 @@ pub(crate) fn evaluate_internal(
                     if let Some(signal)=build_signal(config,&features,analysis,&market.symbol,now,inner.model.as_ref(),tick_size) {
                         if !repeated {
                             let (admit, transition) = prepare_signal_transition(
-                                &mut inner,
+                                inner,
                                 &signal,
                                 features.last_price,
                                 now,
