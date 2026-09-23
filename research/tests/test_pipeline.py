@@ -15,9 +15,36 @@ from train_model import (
     FEATURE_NAMES,
     compute_features_and_labels,
     export_model_artifact,
-    generate_synthetic_candles,
     train_champion_model,
 )
+
+
+def generate_synthetic_candles(num_bars: int = 1000, seed: int = 42) -> list[dict]:
+    """Deterministic test fixture only; production training never falls back to synthetic data."""
+    rng = np.random.default_rng(seed)
+    start_ms = 1_700_000_000_000
+    price = 65_000.0
+    candles = []
+    for i in range(num_bars):
+        vol = rng.uniform(0.0005, 0.0025)
+        regime = np.sin(i / 100.0) * 0.0004
+        ret = rng.normal(regime, vol)
+        open_p = price
+        close_p = price * (1.0 + ret)
+        high_p = max(open_p, close_p) * (1.0 + abs(rng.normal(0.0, vol * 0.7)))
+        low_p = min(open_p, close_p) * (1.0 - abs(rng.normal(0.0, vol * 0.7)))
+        volume = rng.lognormal(mean=3.5, sigma=0.8)
+        candles.append({
+            "start_ms": start_ms + i * 60_000,
+            "open": open_p,
+            "high": high_p,
+            "low": low_p,
+            "close": close_p,
+            "volume": volume,
+            "turnover": volume * close_p,
+        })
+        price = close_p
+    return candles
 
 
 def test_synthetic_candles_generation():
