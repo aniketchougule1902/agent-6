@@ -74,7 +74,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 
 - [x] isotonic / Platt calibration
 - [x] Brier score + ECE metrics
-- [ ] uncertainty/disagreement features
+- [x] uncertainty/disagreement features
 - [x] NO_TRADE threshold from validation
 - [x] confidence bucket report
 - [x] probability drift monitor
