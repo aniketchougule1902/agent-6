@@ -3,7 +3,7 @@ use crate::{
     state::{now_ms, AppState, InternalState},
     types::{
         AlertKind, Candle, EngineEvent, FeatureSnapshot, MarketRegime, Side, SignalStatus,
-        TradeSignal,
+        TradeSignal, TimeframeAnalysis,
     },
 };
 use std::{collections::VecDeque, time::Duration};
@@ -15,85 +15,71 @@ pub async fn run_loop(state: AppState) {
     loop {
         ticker.tick().await;
         let now = now_ms();
+        let market = runtime::current();
         let mut events = Vec::new();
-
         {
             let mut inner = state.inner.write();
             inner.prune_flows(now);
-
-            let stale_now = inner.connected
-                && now.saturating_sub(inner.last_market_event_ms) > state.config.stale_feed_ms;
-            if stale_now != inner.feed_stale {
-                inner.feed_stale = stale_now;
+            let stale = !inner.connected
+                || now.saturating_sub(inner.last_market_event_ms) > state.config.stale_feed_ms
+                || inner.orderbook_event_ms == 0
+                || now.saturating_sub(inner.orderbook_event_ms) > state.config.stale_feed_ms;
+            if stale != inner.feed_stale {
+                inner.feed_stale = stale;
                 events.push(EngineEvent {
                     ts_ms: now,
-                    event_type: if stale_now { "feed_stale" } else { "feed_recovered" }.into(),
-                    alert: Some(if stale_now {
-                        AlertKind::FeedStale
-                    } else {
-                        AlertKind::FeedRecovered
-                    }),
-                    message: if stale_now {
-                        format!(
-                            "Market feed stale for {} ms; new signals suspended.",
-                            now.saturating_sub(inner.last_market_event_ms)
-                        )
-                    } else {
-                        "Fresh market events resumed; signal generation re-enabled.".into()
-                    },
-                    signal: inner.active_signal.clone(),
+                    event_type: if stale { "feed_stale" } else { "feed_recovered" }.into(),
+                    alert: Some(if stale { AlertKind::FeedStale } else { AlertKind::FeedRecovered }),
+                    message: if stale { "Feed integrity halt; new setups suspended." } else { "Fresh feed restored." }.into(),
+                    signal: None,
                 });
             }
-
+            // Deadlines still expire during outages; no invented target/stop hit.
+            for signal in inner.signals.values_mut() {
+                if !terminal(signal) && now >= signal.created_at_ms + hold_ms(&signal.timeframe) {
+                    signal.status = SignalStatus::Expired;
+                    signal.last_event_ms = now;
+                    signal.observed_exit_price = None;
+                    events.push(EngineEvent { ts_ms:now,event_type:"expired".into(),alert:Some(AlertKind::Expired),message:format!("{}m setup expired; no execution implied",signal.timeframe),signal:Some(signal.clone()) });
+                }
+            }
+            let mut analyses: Vec<_> = crate::indicators::TIMEFRAMES.iter().filter_map(|tf| {
+                inner.bars.get(*tf).and_then(|bars| crate::indicators::analyze(bars,tf,now))
+            }).collect();
             if let Some(features) = compute_features(&inner, now) {
                 inner.features = Some(features.clone());
-
-                if !inner.feed_stale {
-                    events.extend(update_signal_lifecycle(&mut inner, now));
-
-                    let terminal = inner.active_signal.as_ref().is_some_and(|signal| {
-                        matches!(
-                            signal.status,
-                            SignalStatus::Tp2Hit | SignalStatus::StopLossHit | SignalStatus::Expired
-                        )
-                    });
-                    if terminal
-                        && now.saturating_sub(inner.last_signal_at_ms)
-                            > state.config.signal_cooldown_secs * 1000
-                    {
-                        inner.active_signal = None;
-                    }
-
-                    if inner.active_signal.is_none()
-                        && now.saturating_sub(inner.last_signal_at_ms)
-                            > state.config.signal_cooldown_secs * 1000
-                    {
-                        if let Some(signal) = build_signal(&state, &features, now) {
-                            inner.last_signal_at_ms = now;
-                            inner.active_signal = Some(signal.clone());
-                            events.push(EngineEvent {
-                                ts_ms: now,
-                                event_type: "signal".into(),
-                                alert: Some(AlertKind::Signal),
-                                message: format!(
-                                    "{} {:?} setup at {:.4} (quality {:.1}%)",
-                                    signal.symbol,
-                                    signal.side,
-                                    (signal.entry_low + signal.entry_high) / 2.0,
-                                    signal.confidence * 100.0
-                                ),
-                                signal: Some(signal),
-                            });
-                        }
+                let biases: Vec<_> = analyses.iter().map(|a| (a.timeframe.clone(), a.bias.clone())).collect();
+                for analysis in &mut analyses {
+                    let direction = if analysis.bias == "long" {1.0} else {-1.0};
+                    let flow = (features.trade_flow_imbalance + features.book_imbalance_top5) / 2.0;
+                    analysis.quality = (0.8 * analysis.quality + 0.2 * (0.5 + 0.5 * direction * flow)).clamp(0.0,1.0);
+                    if stale { analysis.blockers.push("Live feed is stale".into()); }
+                    if features.spread_bps > state.config.max_spread_bps {analysis.blockers.push("Spread above limit".into());}
+                    if direction * flow < -0.15 {analysis.blockers.push("Order flow opposes the setup".into());}
+                    let higher = match analysis.timeframe.as_str() {"1"=>"3","3"=>"5","5"=>"15",_=>"5"};
+                    if !biases.iter().any(|(tf,bias)| tf==higher && bias==&analysis.bias && bias!="neutral") {analysis.blockers.push("Companion timeframe does not confirm".into());}
+                    if (features.last_price-analysis.close).abs()>analysis.atr14*0.75 {analysis.blockers.push("Live price moved too far from the closed candle".into());}
+                    if analysis.quality < state.config.min_signal_score {analysis.blockers.push("Quality below configured threshold".into());}
+                    if analysis.atr14/features.last_price*10_000.0>150.0 {analysis.blockers.push("Abnormal volatility".into());}
+                    let existing=inner.signals.get(&analysis.timeframe);
+                    let available=existing.is_none_or(|s| terminal(s) && now.saturating_sub(s.last_event_ms)>state.config.signal_cooldown_secs*1000);
+                    let repeated=inner.admitted_candles.get(&analysis.timeframe)==Some(&analysis.candle_ms);
+                    if analysis.blockers.is_empty() {
+                        if let Some(signal)=build_signal(&state,&features,analysis,&market.symbol,now) {
+                            if available && !repeated {
+                                inner.admitted_candles.insert(analysis.timeframe.clone(),analysis.candle_ms);
+                                inner.signals.insert(analysis.timeframe.clone(),signal.clone());
+                                events.push(EngineEvent {ts_ms:now,event_type:"signal".into(),alert:Some(AlertKind::Signal),message:format!("{} {}m {:?} paper setup; quality {:.0}%",signal.symbol,signal.timeframe,signal.side,signal.confidence*100.0),signal:Some(signal)});
+                            }
+                        } else { analysis.blockers.push("Estimated costs or stop geometry fail risk checks".into()); }
                     }
                 }
             }
-            inner.updated_at_ms = now;
+            inner.analyses=analyses;
+            inner.active_signal=inner.signals.get(&market.timeframe).cloned();
+            inner.updated_at_ms=now;
         }
-
-        for event in events {
-            state.publish(event);
-        }
+        for event in events {state.publish(event);}
     }
 }
 
@@ -198,139 +184,89 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     })
 }
 
-fn build_signal(state: &AppState, f: &FeatureSnapshot, now: u64) -> Option<TradeSignal> {
-    if f.feed_age_ms > state.config.stale_feed_ms
-        || f.orderbook_age_ms > state.config.stale_feed_ms
-        || f.spread_bps > state.config.max_spread_bps
-    {
-        return None;
-    }
-
-    let (side, confidence) = if f.long_score >= f.short_score {
-        (Side::Long, f.long_score)
-    } else {
-        (Side::Short, f.short_score)
-    };
-    if confidence < state.config.min_signal_score {
-        return None;
-    }
-
-    let price = f.last_price;
-    let risk = (f.atr_14 * 1.20).max(price * 0.0010);
-    let rr2 = state.config.min_rr.max(2.2);
-    let entry_half_width = (f.atr_14 * 0.08).max(price * 0.00005);
-
-    let (stop_loss, tp1, tp2, invalidation) = match side {
-        Side::Long => (
-            price - risk,
-            price + risk * 1.4,
-            price + risk * rr2,
-            format!("invalidate on live trade <= {:.4}", price - risk),
-        ),
-        Side::Short => (
-            price + risk,
-            price - risk * 1.4,
-            price - risk * rr2,
-            format!("invalidate on live trade >= {:.4}", price + risk),
-        ),
-    };
-
-    let mut reasons = vec![
-        format!("15m trend {:.1} bps", f.trend_15m_bps),
-        format!("5m trend {:.1} bps", f.trend_5m_bps),
-        format!("L50 imbalance {:.2}", f.book_imbalance),
-        format!("top5 imbalance {:.2}", f.book_imbalance_top5),
-        format!("microprice {:.2} bps", f.microprice_bps),
-        format!("depth pressure {:.2}", f.depth_pressure),
-        format!("trade-flow imbalance {:.2}", f.trade_flow_imbalance),
-        format!("large-trade imbalance {:.2}", f.large_trade_imbalance),
-        format!("liquidation burst {:.2}", f.liquidation_burst_5s),
-        format!("spread {:.2} bps", f.spread_bps),
-    ];
-    if f.open_interest_delta_pct.abs() > 0.01 {
-        reasons.push(format!("OI delta {:.3}%", f.open_interest_delta_pct));
-    }
-
-    let market = runtime::current();
+fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64) -> Option<TradeSignal> {
+    let price=f.last_price;
+    let side=if a.bias=="long" {Side::Long} else {Side::Short};
+    let direction=if a.bias=="long" {1.0} else {-1.0};
+    let anchor=if a.setup=="channel_breakout" {if direction>0.0 {a.resistance} else {a.support}} else {a.ema21};
+    let risk=(direction*(price-anchor)+a.atr14*0.35).max(a.atr14*1.2).max(price*0.0008);
+    let cost=price*(state.config.round_trip_cost_bps+f.spread_bps)/10_000.0;
+    let rr=state.config.min_rr.max(2.5);
+    if !cost.is_finite() || cost<0.0 || risk>a.atr14*3.0 || risk<cost*1.25
+        || (risk*rr-cost)/(risk+cost)<state.config.min_rr {return None;}
+    let tick=crate::catalog::tick_size(symbol)?;
+    let (stop_loss,tp1,tp2)=rounded_levels(price,direction,risk,rr,tick)?;
+    let actual_risk=(price-stop_loss).abs();
+    let actual_reward=(tp2-price).abs();
+    if (actual_reward-cost)/(actual_risk+cost)<state.config.min_rr {return None;}
+    let rr=actual_reward/actual_risk;
+    if stop_loss<=0.0 || tp1<=0.0 || tp2<=0.0 {return None;}
     Some(TradeSignal {
-        id: Uuid::new_v4().to_string(),
-        symbol: market.symbol,
-        timeframe: market.timeframe,
-        side,
-        status: SignalStatus::Active,
-        created_at_ms: now,
-        entry_low: price - entry_half_width,
-        entry_high: price + entry_half_width,
-        stop_loss,
-        tp1,
-        tp2,
-        risk_reward_tp2: rr2,
-        confidence,
-        calibrated: false,
-        invalidation,
-        reasons,
+        id:Uuid::new_v4().to_string(),symbol:symbol.into(),timeframe:a.timeframe.clone(),side,status:SignalStatus::Active,
+        created_at_ms:now,last_event_ms:now,observed_exit_price:None,
+        entry_low:price,entry_high:price,stop_loss,tp1,tp2,risk_reward_tp2:rr,
+        confidence:a.quality,calibrated:false,
+        invalidation:format!("Paper reference entry. Stop {:.10}; expires in {} minutes. Net estimated TP2 R:R {:.2}.",stop_loss,hold_ms(&a.timeframe)/60_000,(actual_reward-cost)/(actual_risk+cost)),
+        reasons:vec![a.setup.replace('_'," "),format!("Closed {}m candle",a.timeframe),format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),format!("Relative volume {:.2}x",a.relative_volume),"Companion timeframe and live flow checked".into(),format!("Estimated round-trip costs {:.1} bps",state.config.round_trip_cost_bps+f.spread_bps)],
     })
 }
 
-fn update_signal_lifecycle(inner: &mut InternalState, now: u64) -> Vec<EngineEvent> {
-    let Some(price) = inner.last_price else {
-        return vec![];
-    };
-    let Some(signal) = inner.active_signal.as_mut() else {
-        return vec![];
-    };
+fn rounded_levels(price:f64,direction:f64,risk:f64,rr:f64,tick:f64)->Option<(f64,f64,f64)> {
+    if ![price,risk,rr,tick].iter().all(|v|v.is_finite()&&*v>0.0) || ![1.0,-1.0].contains(&direction) {return None;}
+    let round=|v:f64,up:bool| if up {(v/tick).ceil()*tick}else{(v/tick).floor()*tick};
+    let stop=round(price-direction*risk,direction<0.0);
+    let risk=(price-stop).abs();
+    let first=round(price+direction*risk*1.4,direction>0.0);
+    let last=round(price+direction*risk*rr,direction>0.0);
+    if ![stop,first,last].iter().all(|v|v.is_finite()&&*v>0.0) || direction*(first-price)<=0.0 || direction*(last-first)<=0.0 {return None;}
+    Some((stop,first,last))
+}
 
-    let mut event = None;
-    match signal.side {
-        Side::Long => {
-            if price <= signal.stop_loss
-                && matches!(signal.status, SignalStatus::Active | SignalStatus::Tp1Hit)
-            {
-                signal.status = SignalStatus::StopLossHit;
-                inner.last_signal_at_ms = now;
-                event = Some(("stop_loss", AlertKind::StopLoss, "Stop-loss hit"));
-            } else if price >= signal.tp2
-                && matches!(signal.status, SignalStatus::Active | SignalStatus::Tp1Hit)
-            {
-                signal.status = SignalStatus::Tp2Hit;
-                inner.last_signal_at_ms = now;
-                event = Some(("tp2", AlertKind::Tp2, "TP2 hit"));
-            } else if price >= signal.tp1 && signal.status == SignalStatus::Active {
-                signal.status = SignalStatus::Tp1Hit;
-                event = Some(("tp1", AlertKind::Tp1, "TP1 hit"));
+fn terminal(signal:&TradeSignal) -> bool {
+    matches!(signal.status,SignalStatus::Tp2Hit|SignalStatus::StopLossHit|SignalStatus::Expired)
+}
+fn hold_ms(timeframe:&str) -> u64 {timeframe.parse::<u64>().unwrap_or(1).saturating_mul(4).clamp(5,60)*60_000}
+
+/// Every admitted public trade is checked, rather than only the 400ms UI tick.
+/// Flags are paper price touches, not confirmations of exchange order fills.
+pub fn observe_price(inner:&mut InternalState,price:f64,ts_ms:u64) -> Vec<EngineEvent> {
+    let mut events=vec![];
+    if !price.is_finite() || price<=0.0 {return events;}
+    for signal in inner.signals.values_mut() {
+        if terminal(signal) || ts_ms<signal.created_at_ms || ts_ms<signal.last_event_ms {continue;}
+        let direction=if matches!(signal.side,Side::Long) {1.0} else {-1.0};
+        let stopped=direction*(price-signal.stop_loss)<=0.0;
+        let final_target=direction*(price-signal.tp2)>=0.0;
+        let first_target=direction*(price-signal.tp1)>=0.0;
+        if ts_ms>=signal.created_at_ms+hold_ms(&signal.timeframe) {
+            signal.status=SignalStatus::Expired;
+            signal.last_event_ms=ts_ms;
+            signal.observed_exit_price=Some(price);
+            events.push(lifecycle_event(signal,ts_ms,"expired",AlertKind::Expired,price));
+        } else if stopped {
+            signal.status=SignalStatus::StopLossHit;
+            signal.last_event_ms=ts_ms;
+            signal.observed_exit_price=Some(price);
+            events.push(lifecycle_event(signal,ts_ms,"stop_loss",AlertKind::StopLoss,price));
+        } else {
+            if first_target && signal.status==SignalStatus::Active {
+                signal.status=SignalStatus::Tp1Hit;
+                signal.last_event_ms=ts_ms;
+                signal.observed_exit_price=Some(price);
+                events.push(lifecycle_event(signal,ts_ms,"tp1",AlertKind::Tp1,price));
             }
-        }
-        Side::Short => {
-            if price >= signal.stop_loss
-                && matches!(signal.status, SignalStatus::Active | SignalStatus::Tp1Hit)
-            {
-                signal.status = SignalStatus::StopLossHit;
-                inner.last_signal_at_ms = now;
-                event = Some(("stop_loss", AlertKind::StopLoss, "Stop-loss hit"));
-            } else if price <= signal.tp2
-                && matches!(signal.status, SignalStatus::Active | SignalStatus::Tp1Hit)
-            {
-                signal.status = SignalStatus::Tp2Hit;
-                inner.last_signal_at_ms = now;
-                event = Some(("tp2", AlertKind::Tp2, "TP2 hit"));
-            } else if price <= signal.tp1 && signal.status == SignalStatus::Active {
-                signal.status = SignalStatus::Tp1Hit;
-                event = Some(("tp1", AlertKind::Tp1, "TP1 hit"));
+            if final_target {
+                signal.status=SignalStatus::Tp2Hit;
+                signal.last_event_ms=ts_ms;
+                signal.observed_exit_price=Some(price);
+                events.push(lifecycle_event(signal,ts_ms,"tp2",AlertKind::Tp2,price));
             }
         }
     }
-
-    event
-        .map(|(event_type, alert, label)| {
-            vec![EngineEvent {
-                ts_ms: now,
-                event_type: event_type.into(),
-                alert: Some(alert),
-                message: format!("{label} at live price {:.4}", price),
-                signal: Some(signal.clone()),
-            }]
-        })
-        .unwrap_or_default()
+    events
+}
+fn lifecycle_event(signal:&TradeSignal,now:u64,kind:&str,alert:AlertKind,price:f64)->EngineEvent {
+    EngineEvent {ts_ms:now,event_type:kind.into(),alert:Some(alert),message:format!("{} {}m {} observed at {:.4} (paper)",signal.symbol,signal.timeframe,kind,price),signal:Some(signal.clone())}
 }
 
 fn atr(bars: &std::collections::VecDeque<Candle>, period: usize) -> Option<f64> {
@@ -554,5 +490,53 @@ mod tests {
         ]);
         let delta = oi_window_delta_pct(&samples, now, 60_000);
         assert!((delta - 5.0).abs() < 1e-9);
+    }
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    fn fixture(tf: &str, side: Side) -> TradeSignal {
+        let long = matches!(side, Side::Long);
+        TradeSignal { id:tf.into(),symbol:"BTCUSDT".into(),timeframe:tf.into(),side,status:SignalStatus::Active,created_at_ms:1_000,entry_low:100.0,entry_high:100.0,stop_loss:if long {90.0}else{110.0},tp1:if long{114.0}else{86.0},tp2:if long{125.0}else{75.0},risk_reward_tp2:2.5,confidence:0.8,calibrated:false,invalidation:String::new(),reasons:vec![],last_event_ms:1_000,observed_exit_price:None }
+    }
+    #[test]
+    fn independent_timeframes_and_duplicate_touches() {
+        let mut inner=InternalState::new();
+        inner.signals.insert("1".into(),fixture("1",Side::Long));
+        inner.signals.insert("5".into(),fixture("5",Side::Short));
+        assert!(observe_price(&mut inner,130.0,999).is_empty());
+        let events=observe_price(&mut inner,126.0,2_000);
+        assert_eq!(events.len(),3);
+        assert!(events.iter().any(|e|e.event_type=="tp1"));
+        assert!(events.iter().any(|e|e.event_type=="tp2"));
+        assert!(events.iter().any(|e|e.event_type=="stop_loss"));
+        assert!(observe_price(&mut inner,126.0,3_000).is_empty());
+        for e in events { assert_eq!(crate::flags::from_event(&e).unwrap().price,126.0); }
+    }
+    #[test]
+    fn short_targets_and_deadline() {
+        let mut inner=InternalState::new();
+        inner.signals.insert("3".into(),fixture("3",Side::Short));
+        assert_eq!(observe_price(&mut inner,85.0,2_000)[0].event_type,"tp1");
+        assert_eq!(observe_price(&mut inner,74.0,3_000)[0].event_type,"tp2");
+        inner.signals.insert("1".into(),fixture("1",Side::Long));
+        assert_eq!(observe_price(&mut inner,100.0,1_000+hold_ms("1")+1)[0].event_type,"expired");
+    }
+}
+
+#[cfg(test)] mod tick_tests {
+    use super::*;
+    #[test] fn meme_and_large_price_levels_obey_ticks() {
+        for (price,tick,risk) in [(0.00001234,0.00000001,0.00000037),(85342.1,0.1,142.31)] {
+            for direction in [1.0,-1.0] {
+                let (s,t1,t2)=rounded_levels(price,direction,risk,2.5,tick).unwrap();
+                for p in [s,t1,t2] {assert!((p/tick-(p/tick).round()).abs()<1e-5);}
+                assert!(direction*(price-s)>0.0);
+                assert!(direction*(t2-t1)>0.0);
+                assert!((t2-price).abs()/(s-price).abs()>=2.5-1e-8);
+            }
+        }
+        assert!(rounded_levels(1.0,1.0,2.0,2.5,0.1).is_none());
     }
 }

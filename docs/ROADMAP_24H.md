@@ -1,6 +1,39 @@
 # Agent-6 — 24-Hour Build Roadmap
 
-This is the working queue for the hourly build automation. Each run should inspect the repository and CI first, then implement the highest-impact incomplete item without duplicating completed work.
+This is the hourly build queue, not an autonomous running schedule. At each checkpoint inspect the repository and CI, implement the highest-impact incomplete item, run the relevant verification, and append evidence to `docs/PROGRESS.md`. The checkpoints are targets; a complete and validated system cannot be guaranteed by elapsed time alone.
+
+`python scripts/hourly-check.py` provides hourly automated validation for 24 hours and logs failures. It does not implement the unchecked work automatically.
+
+## Hourly checkpoint queue
+
+| Hour | Implementation checkpoint | Evidence to record |
+| --- | --- | --- |
+| H0 | Inspect CI, live feed and recorder admission | Test output and live health |
+| H1 | Close replay-to-production-state gap | Replay/live parity fixture |
+| H2 | Persist normalized events to typed analytical storage | Round-trip and schema check |
+| H3 | Drive simulator from replay | Deterministic fill and outcome report |
+| H4 | Add research multi-timeframe features | Prefix-invariance tests |
+| H5 | Add derivatives features | Causal feature tests |
+| H6 | Add bounded Optuna search | Held-out comparison |
+| H7 | Define strategy/model genome | Schema and validation tests |
+| H8 | Build challenger generation | Reproducible candidates |
+| H9 | Automate replay evaluation | After-cost report |
+| H10 | Add champion registry | Artifact integrity check |
+| H11 | Add rollback and critic records | Rollback test |
+| H12 | Add a second venue adapter | Recorded feed fixture |
+| H13 | Normalize venue clocks | Timestamp ordering tests |
+| H14 | Add lead/lag and divergence features | No-lookahead tests |
+| H15 | Isolate venue outages | Fault-injection check |
+| H16 | Wire paper equity to circuit breaker | Loss/drawdown tests |
+| H17 | Add exposure and duplicate-signal controls | Risk tests |
+| H18 | Add volatility/model/data halts | Halt/recovery tests |
+| H19 | Build Windows launcher and preflight | Fresh clone smoke test |
+| H20 | Build Linux/macOS launcher | Clean environment smoke test |
+| H21 | Add graceful shutdown and health details | Reconnect/termination test |
+| H22 | Run full replay, cost and calibration evaluation | Out-of-sample report |
+| H23 | Complete docs and paper shadow checklist | Final test and limitations log |
+
+Each hour begins with the highest-impact incomplete checkpoint. Failed tests take priority over the next row. Unfinished rows stay open; elapsed time does not mark them complete.
 
 ## H0–H2 — Foundation ✅
 
@@ -37,6 +70,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 
 - [ ] Typed event store using Parquet/DuckDB
 - [x] Raw normalized market-event recorder
+- [x] Connect recorder admission to the production live websocket path
 - [x] Deterministic replay clock
 - [ ] Re-run live Rust feature/signal code against replay
 - [x] MFE/MAE and time-to-target outcome labeling

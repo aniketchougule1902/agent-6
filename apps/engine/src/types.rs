@@ -117,6 +117,47 @@ pub struct TradeSignal {
     pub calibrated: bool,
     pub invalidation: String,
     pub reasons: Vec<String>,
+    #[serde(default)]
+    pub last_event_ms: u64,
+    #[serde(default)]
+    pub observed_exit_price: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct TimeframeAnalysis {
+    pub timeframe: String,
+    pub candle_ms: u64,
+    pub close: f64,
+    pub ema9: f64,
+    pub ema21: f64,
+    pub ema50: f64,
+    pub rsi14: f64,
+    pub adx14: f64,
+    pub macd_histogram: f64,
+    pub atr14: f64,
+    pub vwap20: f64,
+    pub bb_upper: f64,
+    pub bb_lower: f64,
+    pub relative_volume: f64,
+    pub support: f64,
+    pub resistance: f64,
+    pub bias: String,
+    pub setup: String,
+    pub quality: f64,
+    pub blockers: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct ChartFlag {
+    pub id: String,
+    pub symbol: String,
+    pub timeframe: String,
+    pub ts_ms: u64,
+    pub price: f64,
+    pub side: Side,
+    pub kind: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
@@ -143,6 +184,9 @@ pub struct EngineSnapshot {
     pub index_price: Option<f64>,
     pub features: Option<FeatureSnapshot>,
     pub active_signal: Option<TradeSignal>,
+    pub timeframe_signals: Vec<TradeSignal>,
+    pub analyses: Vec<TimeframeAnalysis>,
+    pub chart_flags: Vec<ChartFlag>,
     pub candles_1m: Vec<Candle>,
     pub candles_3m: Vec<Candle>,
     pub candles_5m: Vec<Candle>,

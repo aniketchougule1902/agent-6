@@ -1,10 +1,11 @@
 use crate::{
+    live_recorder::AcceptedMarketRecorder,
     microstructure::depth_dynamics,
     runtime::{self, RuntimeMarketConfig},
     state::{now_ms, AppState, FlowSample, InternalState, OiSample},
     types::{AlertKind, Candle, EngineEvent},
 };
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use std::{collections::HashMap, time::Duration};
@@ -15,20 +16,37 @@ use tracing::{info, warn};
 pub async fn backfill(state: &AppState, symbol: &str) -> Result<()> {
     let client = reqwest::Client::new();
     for interval in ["1", "3", "5", "15"] {
-        let url = format!("{}/v5/market/kline", state.config.rest_base_url());
-        let response: Value = client
-            .get(&url)
-            .query(&[
-                ("category", "linear"),
-                ("symbol", symbol),
-                ("interval", interval),
-                ("limit", "500"),
-            ])
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
+        let endpoints: &[&str] = if state.config.bybit_testnet {
+            &["https://api-testnet.bybit.com"]
+        } else {
+            &["https://api.bybit.com", "https://api.bytick.com"]
+        };
+        let mut response = None;
+        for base in endpoints {
+            let url = format!("{base}/v5/market/kline");
+            let result = client
+                .get(&url)
+                .query(&[
+                    ("category", "linear"),
+                    ("symbol", symbol),
+                    ("interval", interval),
+                    ("limit", "500"),
+                ])
+                .send()
+                .await
+                .and_then(reqwest::Response::error_for_status);
+            match result {
+                Ok(reply) => {
+                    response = Some(reply.json::<Value>().await?);
+                    break;
+                }
+                Err(error) => warn!(?error, %url, "historical endpoint failed; trying next"),
+            }
+        }
+        let response = response.with_context(|| format!("all Bybit historical endpoints failed for {interval}m"))?;
+        if response.get("retCode").and_then(Value::as_i64) != Some(0) {
+            bail!("Bybit rejected historical {interval}m request: {}", response.get("retMsg").and_then(Value::as_str).unwrap_or("unknown error"));
+        }
 
         let list = response
             .pointer("/result/list")
@@ -55,6 +73,9 @@ pub async fn backfill(state: &AppState, symbol: &str) -> Result<()> {
             }
         }
 
+        if runtime::current().symbol != symbol {
+            bail!("historical backfill canceled after market change");
+        }
         let mut inner = state.inner.write();
         for candle in candles {
             inner.upsert_candle(candle);
@@ -72,19 +93,41 @@ enum SessionEnd {
 pub async fn run_forever(state: AppState) {
     let mut market_changes = runtime::subscribe();
     let mut loaded_symbol = String::new();
+    let mut backfill_task: Option<tokio::task::JoinHandle<()>> = None;
+    let mut recorder = match AcceptedMarketRecorder::open(&state.config.market_record_path) {
+        Ok(recorder) => recorder,
+        Err(error) => {
+            warn!(?error, "market recorder unavailable; live feed halted");
+            return;
+        }
+    };
 
     loop {
         let market = market_changes.borrow().clone();
 
         if loaded_symbol != market.symbol {
-            state.inner.write().reset_market();
-            if let Err(error) = backfill(&state, &market.symbol).await {
-                warn!(?error, symbol = %market.symbol, "historical backfill failed; live feed will still start");
+            if let Some(task) = backfill_task.take() {
+                task.abort();
             }
+            state.inner.write().reset_market();
+            let backfill_state = state.clone();
+            let backfill_symbol = market.symbol.clone();
+            backfill_task = Some(tokio::spawn(async move {
+                loop {
+                    match backfill(&backfill_state, &backfill_symbol).await {
+                        Ok(()) => break,
+                        Err(error) => {
+                            warn!(?error, symbol = %backfill_symbol, "historical backfill failed; retrying in 15s");
+                            time::sleep(Duration::from_secs(15)).await;
+                        }
+                    }
+                }
+            }));
             loaded_symbol = market.symbol.clone();
         }
 
-        match run_session(&state, &market, &mut market_changes).await {
+        recorder.reset_symbol(&market.symbol);
+        match run_session(&state, &market, &mut market_changes, &mut recorder).await {
             Ok(SessionEnd::Reconfigure) => {
                 let next = market_changes.borrow().clone();
                 state.inner.write().reset_market();
@@ -125,6 +168,7 @@ async fn run_session(
     state: &AppState,
     market: &RuntimeMarketConfig,
     market_changes: &mut tokio::sync::watch::Receiver<RuntimeMarketConfig>,
+    recorder: &mut AcceptedMarketRecorder,
 ) -> Result<SessionEnd> {
     let (stream, _) = connect_async(state.config.public_ws_url()).await?;
     let (mut write, mut read) = stream.split();
@@ -151,7 +195,14 @@ async fn run_session(
         let now = now_ms();
         let mut inner = state.inner.write();
         inner.connected = true;
-        inner.feed_stale = false;
+        inner.feed_stale = true;
+        inner.orderbook_bids.clear();
+        inner.orderbook_asks.clear();
+        inner.orderbook_seq = 0;
+        inner.orderbook_update_id = 0;
+        inner.orderbook_event_ms = 0;
+        inner.bid = None;
+        inner.ask = None;
         inner.last_market_event_ms = now;
         inner.updated_at_ms = now;
     }
@@ -192,7 +243,15 @@ async fn run_session(
                 };
                 let message = message?;
                 match message {
-                    Message::Text(text) => handle_message(state, &text),
+                    Message::Text(text) => {
+                        if text.contains("\"topic\"") {
+                            match recorder.append_bybit_message(&text) {
+                                Ok(0) => warn!("unrecognized market payload ignored"),
+                                Ok(_) => handle_message(state, &text),
+                                Err(error) => return Err(error.context("market payload rejected before live-state mutation")),
+                            }
+                        }
+                    },
                     Message::Ping(payload) => write.send(Message::Pong(payload)).await?,
                     Message::Close(_) => return Ok(SessionEnd::Disconnected),
                     _ => {}
@@ -209,8 +268,10 @@ fn handle_message(state: &AppState, text: &str) {
     let Some(topic) = root.get("topic").and_then(Value::as_str) else {
         return;
     };
+    if topic.rsplit('.').next() != Some(runtime::current().symbol.as_str()) { return; }
 
     let now = now_ms();
+    let mut lifecycle_events = Vec::new();
     let mut inner = state.inner.write();
     inner.updated_at_ms = now;
     inner.last_market_event_ms = now;
@@ -242,6 +303,10 @@ fn handle_message(state: &AppState, text: &str) {
                 let sign = if trade.get("S").and_then(Value::as_str) == Some("Buy") { 1.0 } else { -1.0 };
                 if price > 0.0 {
                     inner.last_price = Some(price);
+                    let trade_ms = trade.get("T").and_then(parse_u64).unwrap_or(0);
+                    if now.abs_diff(trade_ms) <= state.config.stale_feed_ms {
+                        lifecycle_events.extend(crate::signal::observe_price(&mut inner, price, trade_ms));
+                    }
                 }
                 inner.push_trade_flow(FlowSample {
                     ts_ms: trade.get("T").and_then(parse_u64).unwrap_or(now),
@@ -309,6 +374,8 @@ fn handle_message(state: &AppState, text: &str) {
     }
 
     inner.prune_flows(now);
+    drop(inner);
+    for event in lifecycle_events { state.publish(event); }
 }
 
 fn apply_levels(book: &mut HashMap<String, (f64, f64)>, levels: &[Value]) {

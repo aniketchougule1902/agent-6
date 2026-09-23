@@ -1,5 +1,17 @@
 # Progress Log
 
+## 2026-09-23 — Live admission and optional Jev review
+
+- Connected the normalized Bybit recorder to the production websocket path before market-state mutation. Integrity or disk-write failures end the session and reconnect; the L50 book is cleared at each session start.
+- Required a fresh L50 snapshot before the live signal loop exits its stale-data state.
+- Added an optional, asynchronous TypeSafe Jev qualitative confluence review for each emitted setup. It is journaled separately and never presented as win probability.
+- The previously listed replay, promotion, multi-venue and risk-hardening work remains open. No 90% win-rate or 24-hour completion claim is made without validation.
+- Added a TradingView symbol link, downloadable PNG chart with entry/SL/TP lines, and a local hourly verification script.
+- Local verification: 52 Rust tests passed; UI production build passed; live Bybit REST returned HTTP 200 and the running engine loaded 500 1m and 500 15m candles, connected its websocket, produced feature state, and wrote normalized market events. Jev was not exercised because `TYPESAFE_API_KEY` is absent. Python research tests await dependency installation on this machine.
+- Follow-up run: moved a locally supplied TypeSafe key out of the tracked example and into ignored `.env`; Jev review events were then observed in the journal. Added 15-second historical backfill retry and Bybit's documented `api.bytick.com` alternate REST host after `api.bybit.com` connection resets. Fixed chronological candle insertion when live data precedes backfill, which had caused Lightweight Charts to blank the UI. Added a regression test for the delayed-backfill case.
+- Live checkpoint: engine health `ok=true`, all four intervals have 500 candles, features are present, dashboard HTTP 200, browser screenshot shows chart and active setup, and a fresh browser session reports no page errors. The 24-hour hourly checker is running; its H00 Rust and UI checks passed, while research failed because Python dependencies are not installed.
+
+
 ## 2026-09-22 — Foundation and live vertical slice
 
 - Initialized the local-only Agent-6 workspace with the Rust event-driven engine, strict typed market structures, Bybit V5 public linear feed, REST kline backfill, exact L50 reconstruction, typed features, baseline signal/risk engine, JSONL decision journal, audible alarms, Axum API, generated Rust→TypeScript contracts, React/Vite dashboard and CI.
@@ -86,3 +98,49 @@
 6. Wire the session loss/drawdown circuit breaker into signal admission, then add the remaining risk halts.
 
 Real-money autonomous execution remains absent/disabled.
+
+
+## Advanced scalping dashboard update (2026-09-23)
+
+- Independent paper setups and target/stop alerts for all supported scalping intervals: 1m, 3m, 5m and 15m. Changing the displayed timeframe preserves the other timeframe setups. Changing the symbol or restarting resets active tracking; journal chart flags remain available.
+- Chart entry arrows and TP1-touch, TP2-exit and stop-exit flags use observed public-trade prices. These are paper observations, not exchange fills. Existing journals without observed exit prices cannot reconstruct exit flags. Journal-tail reload retains up to 1,000 flags from the last 2 MB.
+- Toggle EMA 9/21/50, rolling VWAP20, Bollinger20/2, volume and flags from other intervals. Download the current setup drawing when a setup exists.
+- Closed-candle analysis includes Wilder RSI14, ADX14, ATR14, MACD histogram, relative volume and prior-20-bar support/resistance. Trend pullbacks and channel breakouts require momentum, participation, directional agreement and live flow checks. The board explains blocked setups.
+- Admission checks reject stale/gapped data, excessive spread, price chasing, abnormal volatility, unfavorable cost-adjusted reward/risk and repeated entries on the same candle. `A6_ROUND_TRIP_COST_BPS=12` estimates round-trip fees/slippage before live spread; set it to realistic venue/order costs. It does not simulate fills.
+- Jev remains an optional asynchronous review of the selected setup. Scores are uncalibrated quality, not win probabilities. More filters have not demonstrated a higher win rate; 90%+ accuracy is neither established nor guaranteed.
+- Local run: `cargo run -p agent6-engine`; in another terminal `cd apps/ui` then `npm run dev -- --host 127.0.0.1`. Open http://127.0.0.1:5173 and click Enable Alarms for browser audio. The server and browser must remain running for browser alarms.
+- Verified: 60 Rust tests pass, UI production build passes, live API exposes four analyses and 500 1m history candles, and browser loads with no page errors. Tests cover independent long/short lifecycles, price gaps across both targets, duplicate touches, old ticks and expiry. No live orders are submitted. Research training and out-of-sample profitability remain separate validation work.
+
+
+## Chart terminal and market catalog (2026-09-23)
+
+The chart-focused layout takes visual direction from the supplied screenshot: directional candle colors, an EMA21/50 trend ribbon, paper entry/exit flags, and translucent reward/risk rectangles with entry, stop and TP2 labels. This is an original implementation, not LuxAlgo proprietary logic or a claim of superior performance. The cloud is a trend visualization, not an additional independent prediction. Actual exchange candles remain the price source; synthetic Heikin-Ashi prices are not used for outcomes.
+
+### Market selection
+
+Search by coin or ticker using the top combobox (arrow keys, Enter, Escape supported). `/api/instruments` paginates Bybit linear instruments, filters active perpetual contracts, caches the catalog for 15 minutes, and validates selections before switching. The live test returned 845 markets, including DOGE, PEPE and BONK contracts. Coverage is all currently listed Bybit linear perpetuals, including USDT and USDC; it does not include every token on every exchange or DEX. Coin icons use cryptocurrency-icons and ErikThiart/cryptocurrency-icons, with initials when no image exists. They are display assets, not token identity verification.
+
+### Chart, sizing and status
+
+- Toggle ribbon, trend candle colors, EMA, VWAP, Bollinger bands and TP/SL shading. Export PNG includes the custom ribbon and risk rectangles; export also works while waiting for a signal.
+- TP/SL levels round outward to the exchange tick size and recheck net estimated reward/risk. Admission waits for instrument metadata. Companion timeframe confirmation maps 1m to 3m, 3m to 5m, 5m to 15m, and 15m to 5m.
+- Position planner uses account value in quote currency, risk percentage, estimated round-trip costs and venue quantity increments. It is informational, submits no orders, and excludes funding, gaps, liquidation and margin constraints.
+- Top service bar polls actual local API health every four seconds. It distinguishes feed live/unavailable, history ready/loading, signal evaluating/halted, Jev configured/not configured, paper execution, calibrated model not deployed, dashboard connectivity and browser audio. Jev configuration does not prove remote service availability.
+- Entry/exit flags are paper observations. Active positions are not restored across process restarts or symbol changes. The persistent journal preserves available flag history.
+
+### Verification
+
+62 Rust tests pass, including market filtering and tick precision for tiny meme prices and large BTC prices. Production TypeScript/Vite build passed. Browser checks verified service status, search, live BTC-to-1000PEPEUSDT switch, meme logo, 500 historical candles and no page errors. An isolated browser fixture verified the risk-zone renderer without inserting a signal into the live system. Current quality scores remain uncalibrated. Comparative win rate against LuxAlgo, profitability and 90% accuracy have not been established.
+
+Data contract: https://bybit-exchange.github.io/docs/v5/market/instrument
+Chart API: https://tradingview.github.io/lightweight-charts/docs/api/interfaces/IChartApi
+
+
+## Isolated demo validation
+
+Added stateless win/loss demonstrations using synthetic candles, manually seeded setups, production TP/SL lifecycle and the fill simulator. The UI animates entry and exits with explicit synthetic labels. Demo results never enter the live journal. Scripted win net: +18.0968 USDT after simulated costs. 63 Rust tests and 46 Python tests pass; UI build and browser demo passed. Live engine and dashboard running; Jev configured; no calibrated model deployed.
+
+
+## Cross-timeframe visibility fix
+
+An empty selected interval previously hid open setups from other intervals. The dashboard now selects an open paper setup automatically, provides a setup selector independent of chart interval, and displays its levels, shaded zones, flags and sizing on the selected chart. Labels state both timeframes. New-entry blockers are distinct from existing trade monitoring; completed setups are labeled last setup. Chart price scaling includes all displayed setup levels. Default flags follow the displayed setup; All timeframe flags expands the history. Verified on the live 1m chart with the 5m short and five setup-selection regression checks. No trading thresholds changed.

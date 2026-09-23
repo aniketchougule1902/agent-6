@@ -2,7 +2,7 @@ use crate::{
     config::Config,
     journal::Journal,
     runtime,
-    types::{Candle, EngineEvent, EngineSnapshot, FeatureSnapshot, TradeSignal},
+    types::{Candle, ChartFlag, EngineEvent, EngineSnapshot, FeatureSnapshot, TradeSignal, TimeframeAnalysis},
 };
 use parking_lot::RwLock;
 use std::{
@@ -57,12 +57,15 @@ pub(crate) struct InternalState {
     pub oi_samples: VecDeque<OiSample>,
     pub features: Option<FeatureSnapshot>,
     pub active_signal: Option<TradeSignal>,
+    pub signals: HashMap<String, TradeSignal>,
+    pub analyses: Vec<TimeframeAnalysis>,
+    pub admitted_candles: HashMap<String, u64>,
     pub last_signal_at_ms: u64,
     pub updated_at_ms: u64,
 }
 
 impl InternalState {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let now = now_ms();
         Self {
             connected: false,
@@ -95,6 +98,9 @@ impl InternalState {
             oi_samples: VecDeque::new(),
             features: None,
             active_signal: None,
+            signals: HashMap::new(),
+            analyses: Vec::new(),
+            admitted_candles: HashMap::new(),
             last_signal_at_ms: 0,
             updated_at_ms: now,
         }
@@ -102,10 +108,11 @@ impl InternalState {
 
     pub fn upsert_candle(&mut self, candle: Candle) {
         let deque = self.bars.entry(candle.interval.clone()).or_default();
-        if let Some(existing) = deque.iter_mut().find(|c| c.start_ms == candle.start_ms) {
-            *existing = candle;
+        let position = deque.iter().position(|existing| existing.start_ms >= candle.start_ms);
+        if let Some(index) = position.filter(|&index| deque[index].start_ms == candle.start_ms) {
+            deque[index] = candle;
         } else {
-            deque.push_back(candle);
+            deque.insert(position.unwrap_or(deque.len()), candle);
             while deque.len() > 1500 {
                 deque.pop_front();
             }
@@ -167,6 +174,9 @@ impl InternalState {
         self.previous_open_interest = None;
         self.funding_rate = None;
         self.bars.clear();
+        self.signals.clear();
+        self.analyses.clear();
+        self.admitted_candles.clear();
         self.trade_flow.clear();
         self.liquidation_flow.clear();
         self.oi_samples.clear();
@@ -202,15 +212,19 @@ impl InternalState {
 #[derive(Clone)]
 pub struct AppState {
     pub config: Config,
+    pub paper: Arc<parking_lot::Mutex<crate::paper::Paper>>,
     pub(crate) inner: Arc<RwLock<InternalState>>,
     pub events: broadcast::Sender<EngineEvent>,
     journal: Arc<Journal>,
+    chart_flags: Arc<RwLock<VecDeque<ChartFlag>>>,
 }
 
 impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let (events, _) = broadcast::channel(512);
         Ok(Self {
+            paper: Arc::new(parking_lot::Mutex::new(crate::paper::Paper::open(std::env::var("A6_PAPER_PATH").unwrap_or_else(|_|"data/paper-account.json".into()).into())?)),
+            chart_flags: Arc::new(RwLock::new(crate::flags::load(&config.journal_path))),
             journal: Arc::new(Journal::open(&config.journal_path)?),
             config,
             inner: Arc::new(RwLock::new(InternalState::new())),
@@ -219,6 +233,9 @@ impl AppState {
     }
 
     pub fn publish(&self, event: EngineEvent) {
+        if let Some(flag) = crate::flags::from_event(&event) {
+            crate::flags::append(&mut self.chart_flags.write(), flag);
+        }
         self.journal.append(&event);
         if event.alert.is_some() {
             print!("\x07");
@@ -238,8 +255,8 @@ impl AppState {
         let now = now_ms();
         let market = runtime::current();
         EngineSnapshot {
-            symbol: market.symbol,
-            timeframe: market.timeframe,
+            symbol: market.symbol.clone(),
+            timeframe: market.timeframe.clone(),
             market_generation: market.generation,
             connected: s.connected,
             feed_stale: s.feed_stale,
@@ -248,7 +265,10 @@ impl AppState {
             mark_price: s.mark_price,
             index_price: s.index_price,
             features: s.features.clone(),
-            active_signal: s.active_signal.clone(),
+            active_signal: s.signals.get(&market.timeframe).cloned(),
+            timeframe_signals: crate::indicators::TIMEFRAMES.iter().filter_map(|tf| s.signals.get(*tf).cloned()).collect(),
+            analyses: s.analyses.clone(),
+            chart_flags: self.chart_flags.read().iter().filter(|f| f.symbol == market.symbol).cloned().collect(),
             candles_1m: bars("1"),
             candles_3m: bars("3"),
             candles_5m: bars("5"),
@@ -264,4 +284,35 @@ pub fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_millis() as u64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn candle(start_ms: u64) -> Candle {
+        Candle {
+            start_ms,
+            end_ms: start_ms + 60_000,
+            interval: "1".into(),
+            open: 100.0,
+            high: 101.0,
+            low: 99.0,
+            close: 100.0,
+            volume: 1.0,
+            turnover: 100.0,
+            confirmed: true,
+        }
+    }
+
+    #[test]
+    fn delayed_backfill_stays_ordered_after_live_candle() {
+        let mut state = InternalState::new();
+        state.upsert_candle(candle(180_000));
+        state.upsert_candle(candle(60_000));
+        state.upsert_candle(candle(120_000));
+        state.upsert_candle(candle(180_000));
+        let times: Vec<_> = state.bars["1"].iter().map(|bar| bar.start_ms).collect();
+        assert_eq!(times, [60_000, 120_000, 180_000]);
+    }
 }

@@ -44,6 +44,8 @@ Rust owns anything that must react within milliseconds:
 
 LLMs never sit in this path.
 
+An optional TypeSafe Jev worker reviews only newly emitted setups with a bounded feature snapshot. It runs asynchronously, writes a qualitative event, and cannot change signal admission, TP/SL, or confidence. Its contribution to prediction must be established by separate out-of-sample tests before it can influence live decisions.
+
 ## Research path
 
 Python owns expensive asynchronous research:

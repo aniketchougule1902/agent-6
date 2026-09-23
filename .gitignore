@@ -8,3 +8,6 @@ data/
 .vscode/
 .idea/
 apps/ui/src/generated/
+*.tsbuildinfo
+*.egg-info/
+__pycache__/
