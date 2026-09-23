@@ -63,12 +63,19 @@
 - Added tests for consensus, maximally opposed models, certain consensus and malformed inputs.
 - Code commit `b06f2c91c8ee0ec297a0e450aee2d5360059b22c`; tests `a75aca76793226325a9773d05b606466b3f12d47`.
 
+## 2026-09-23 — Risk circuit-breaker foundation
+
+- Added a strongly typed, deterministic `SessionRiskCircuitBreaker` for maximum session loss and peak-to-current drawdown limits.
+- The guard validates all limits/equity inputs, fails closed on non-finite/non-positive equity, and latches permanently after a breach so later recovery cannot silently re-enable signals.
+- Unit tests cover exact daily-loss boundary, peak-relative drawdown, latch behavior and malformed inputs. The module is compiled into the engine but is not yet wired into signal admission, so the roadmap risk-circuit-breaker item remains intentionally incomplete.
+- Code commits: `3842cdd1853c537ffe81a7b10423d40915148047`, `89bb4e0df7515f3f04fc8f5608088786aee73aa9`.
+
 ### Current highest-priority gaps
 
 1. Invoke `append_bybit_message` from the production accepted websocket path; rejected stale/non-monotonic L50 payloads must remain zero-write before live state mutation.
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add multi-timeframe/derivatives research features, then champion/challenger registry and rollback.
+5. Wire the new session loss/drawdown circuit breaker into signal admission, then add the remaining risk halts.
 
 Real-money autonomous execution remains absent/disabled.
