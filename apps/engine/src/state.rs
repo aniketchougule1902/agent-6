@@ -58,6 +58,7 @@ pub(crate) struct InternalState {
     pub features: Option<FeatureSnapshot>,
     pub active_signal: Option<TradeSignal>,
     pub signals: HashMap<String, TradeSignal>,
+    pub signal_history: VecDeque<TradeSignal>,
     pub analyses: Vec<TimeframeAnalysis>,
     pub admitted_candles: HashMap<String, u64>,
     pub last_signal_at_ms: u64,
@@ -101,6 +102,7 @@ impl InternalState {
             features: None,
             active_signal: None,
             signals: HashMap::new(),
+            signal_history: VecDeque::new(),
             analyses: Vec::new(),
             admitted_candles: HashMap::new(),
             last_signal_at_ms: 0,
@@ -148,6 +150,18 @@ impl InternalState {
         self.oi_samples.push_back(sample);
         while self.oi_samples.len() > 10_000 {
             self.oi_samples.pop_front();
+        }
+    }
+
+    pub fn archive_signal(&mut self, signal: TradeSignal) {
+        if self.signal_history.back().is_some_and(|last| {
+            last.id == signal.id && last.status == signal.status && last.last_event_ms == signal.last_event_ms
+        }) {
+            return;
+        }
+        self.signal_history.push_back(signal);
+        while self.signal_history.len() > 500 {
+            self.signal_history.pop_front();
         }
     }
 
@@ -285,6 +299,7 @@ impl AppState {
             features: s.features.clone(),
             active_signal: s.signals.get(&market.timeframe).cloned(),
             timeframe_signals: crate::indicators::TIMEFRAMES.iter().filter_map(|tf| s.signals.get(*tf).cloned()).collect(),
+            signal_history: s.signal_history.iter().filter(|signal| signal.symbol == market.symbol).cloned().collect(),
             analyses: s.analyses.clone(),
             chart_flags: self.chart_flags.read().iter().filter(|f| f.symbol == market.symbol).cloned().collect(),
             candles_1m: bars("1"),
