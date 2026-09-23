@@ -50,6 +50,6 @@ export function ServiceBar({socketUp,alarms}:{socketUp:boolean;alarms:boolean}) 
     void refresh();const interval=setInterval(refresh,4000);return()=>{alive=false;controller.abort();clearInterval(interval);};
   },[]);
   const items:Record<string,string>={API:up?'online':'offline',Dashboard:socketUp?'connected':'disconnected',...services,Alarms:alarms?'enabled':'off'};
-  return <div className="service-bar" aria-label="Service status">{Object.entries(items).map(([k,v])=><span key={k} className={['online','connected','live','ready','evaluating','enabled','active','configured','paper scoring','paper only'].includes(v)&&up?'service-good':'service-muted'}><i/>{k.replaceAll('_',' ')} <b>{up||k==='API'?v:'unknown'}</b></span>)}</div>;
+  return <div className="service-bar" aria-label="Service status">{Object.entries(items).map(([k,v])=><span key={k} className={(['online','connected','live','ready','evaluating','enabled','active','configured','paper scoring','paper only'].includes(v) || v.startsWith('deployed'))&&up?'service-good':'service-muted'}><i/>{k.replaceAll('_',' ')} <b>{up||k==='API'?v:'unknown'}</b></span>)}</div>;
 }
 export function price(value:number) {return Number.isFinite(value)?value.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:Math.abs(value)<0.01?10:Math.abs(value)<1?7:Math.abs(value)<100?5:2}):'—';}

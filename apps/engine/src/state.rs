@@ -62,6 +62,7 @@ pub(crate) struct InternalState {
     pub admitted_candles: HashMap<String, u64>,
     pub last_signal_at_ms: u64,
     pub jev_responded: bool,
+    pub model: Option<crate::model::ModelEvaluator>,
     pub updated_at_ms: u64,
 }
 
@@ -104,6 +105,7 @@ impl InternalState {
             admitted_candles: HashMap::new(),
             last_signal_at_ms: 0,
             jev_responded: false,
+            model: None,
             updated_at_ms: now,
         }
     }
@@ -224,12 +226,21 @@ pub struct AppState {
 impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let (events, _) = broadcast::channel(512);
+        let model = match crate::model::ModelEvaluator::load_from_file(&config.model_path) {
+            Ok(m) => Some(m),
+            Err(e) => {
+                tracing::info!(path = %config.model_path.display(), error = %e, "No calibrated champion model loaded; falling back to rule-based paper scoring");
+                None
+            }
+        };
+        let mut inner_state = InternalState::new();
+        inner_state.model = model;
         Ok(Self {
             paper: Arc::new(parking_lot::Mutex::new(crate::paper::Paper::open(std::env::var("A6_PAPER_PATH").unwrap_or_else(|_|"data/paper-account.json".into()).into())?)),
             chart_flags: Arc::new(RwLock::new(crate::flags::load(&config.journal_path))),
             journal: Arc::new(Journal::open(&config.journal_path)?),
             config,
-            inner: Arc::new(RwLock::new(InternalState::new())),
+            inner: Arc::new(RwLock::new(inner_state)),
             events,
         })
     }

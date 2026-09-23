@@ -65,11 +65,23 @@ pub async fn run_loop(state: AppState) {
                     let available=existing.is_none_or(|s| terminal(s) && now.saturating_sub(s.last_event_ms)>state.config.signal_cooldown_secs*1000);
                     let repeated=inner.admitted_candles.get(&analysis.timeframe)==Some(&analysis.candle_ms);
                     if analysis.blockers.is_empty() {
-                        if let Some(signal)=build_signal(&state,&features,analysis,&market.symbol,now) {
+                        if let Some(ref model) = inner.model {
+                            let pred = model.predict(&features, analysis);
+                            if pred.abstain {
+                                analysis.blockers.push(format!(
+                                    "ML model abstention: win probability {:.1}% below threshold {:.1}%",
+                                    pred.calibrated_probability * 100.0,
+                                    pred.threshold * 100.0
+                                ));
+                            }
+                        }
+                    }
+                    if analysis.blockers.is_empty() {
+                        if let Some(signal)=build_signal(&state,&features,analysis,&market.symbol,now,inner.model.as_ref()) {
                             if available && !repeated {
                                 inner.admitted_candles.insert(analysis.timeframe.clone(),analysis.candle_ms);
                                 inner.signals.insert(analysis.timeframe.clone(),signal.clone());
-                                events.push(EngineEvent {ts_ms:now,event_type:"signal".into(),alert:Some(AlertKind::Signal),message:format!("{} {}m {:?} paper setup; quality {:.0}%",signal.symbol,signal.timeframe,signal.side,signal.confidence*100.0),signal:Some(signal)});
+                                events.push(EngineEvent {ts_ms:now,event_type:"signal".into(),alert:Some(AlertKind::Signal),message:format!("{} {}m {:?} paper setup; {} {:.0}%",signal.symbol,signal.timeframe,signal.side,if signal.calibrated {"calibrated prob"} else {"quality"},signal.confidence*100.0),signal:Some(signal)});
                             }
                         } else { analysis.blockers.push("Estimated costs or stop geometry fail risk checks".into()); }
                     }
@@ -184,7 +196,7 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     })
 }
 
-fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64) -> Option<TradeSignal> {
+fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64, model:Option<&crate::model::ModelEvaluator>) -> Option<TradeSignal> {
     let price=f.last_price;
     let side=if a.bias=="long" {Side::Long} else {Side::Short};
     let direction=if a.bias=="long" {1.0} else {-1.0};
@@ -201,13 +213,35 @@ fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbo
     if (actual_reward-cost)/(actual_risk+cost)<state.config.min_rr {return None;}
     let rr=actual_reward/actual_risk;
     if stop_loss<=0.0 || tp1<=0.0 || tp2<=0.0 {return None;}
+
+    let (confidence, calibrated, ml_reasons) = if let Some(m) = model {
+        let pred = m.predict(f, a);
+        (
+            pred.calibrated_probability,
+            true,
+            vec![format!("ML calibrated probability: {:.1}% (Brier {:.3}, ECE {:.3})", pred.calibrated_probability * 100.0, pred.brier, pred.ece)],
+        )
+    } else {
+        (a.quality, false, vec![])
+    };
+
+    let mut reasons = vec![
+        a.setup.replace('_'," "),
+        format!("Closed {}m candle",a.timeframe),
+        format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),
+        format!("Relative volume {:.2}x",a.relative_volume),
+        "Companion timeframe and live flow checked".into(),
+        format!("Estimated round-trip costs {:.1} bps",state.config.round_trip_cost_bps+f.spread_bps),
+    ];
+    reasons.extend(ml_reasons);
+
     Some(TradeSignal {
         id:Uuid::new_v4().to_string(),symbol:symbol.into(),timeframe:a.timeframe.clone(),side,status:SignalStatus::Active,
         created_at_ms:now,last_event_ms:now,observed_exit_price:None,
         entry_low:price,entry_high:price,stop_loss,tp1,tp2,risk_reward_tp2:rr,
-        confidence:a.quality,calibrated:false,
+        confidence,calibrated,
         invalidation:format!("Paper reference entry. Stop {:.10}; expires in {} minutes. Net estimated TP2 R:R {:.2}.",stop_loss,hold_ms(&a.timeframe)/60_000,(actual_reward-cost)/(actual_risk+cost)),
-        reasons:vec![a.setup.replace('_'," "),format!("Closed {}m candle",a.timeframe),format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),format!("Relative volume {:.2}x",a.relative_volume),"Companion timeframe and live flow checked".into(),format!("Estimated round-trip costs {:.1} bps",state.config.round_trip_cost_bps+f.spread_bps)],
+        reasons,
     })
 }
 

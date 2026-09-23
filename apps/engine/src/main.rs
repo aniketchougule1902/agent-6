@@ -19,6 +19,7 @@ mod signal;
 mod simulator;
 mod state;
 mod types;
+mod model;
 
 use crate::{config::Config, state::AppState};
 use tracing::info;

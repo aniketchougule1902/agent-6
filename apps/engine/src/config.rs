@@ -14,6 +14,7 @@ pub struct Config {
     pub journal_path: PathBuf,
     pub market_record_path: PathBuf,
     pub round_trip_cost_bps: f64,
+    pub model_path: PathBuf,
 }
 
 impl Config {
@@ -38,6 +39,9 @@ impl Config {
                 .unwrap_or_else(|_| "data/market-events.jsonl".into())
                 .into(),
             round_trip_cost_bps: parse("A6_ROUND_TRIP_COST_BPS", 12.0),
+            model_path: env::var("A6_MODEL_PATH")
+                .unwrap_or_else(|_| "models/champion_model.json".into())
+                .into(),
         })
     }
 

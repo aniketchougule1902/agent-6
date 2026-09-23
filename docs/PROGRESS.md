@@ -144,3 +144,16 @@ Added stateless win/loss demonstrations using synthetic candles, manually seeded
 ## Cross-timeframe visibility fix
 
 An empty selected interval previously hid open setups from other intervals. The dashboard now selects an open paper setup automatically, provides a setup selector independent of chart interval, and displays its levels, shaded zones, flags and sizing on the selected chart. Labels state both timeframes. New-entry blockers are distinct from existing trade monitoring; completed setups are labeled last setup. Chart price scaling includes all displayed setup levels. Default flags follow the displayed setup; All timeframe flags expands the history. Verified on the live 1m chart with the 5m short and five setup-selection regression checks. No trading thresholds changed.
+
+
+## Calibrated ML model and deployment pipeline (2026-09-23)
+
+- Implemented an end-to-end reproducible research and training pipeline (`scripts/train_model.py`) that fetches Bybit V5 linear perpetual klines, extracts causal multi-factor features matching the engine, builds triple-barrier TP-before-SL meta labels, fits regularized weights with purged chronological splits and embargo, and applies held-out Platt probability calibration.
+- Added champion/challenger evaluation benchmarking against LightGBM and CatBoost models, computing AUC, Brier score, ECE (Expected Calibration Error), and utility-derived `NO_TRADE` abstention thresholds.
+- Serialized content-addressed model artifacts (`models/champion_model.json`) with cryptographic `ModelArtifactManifest` digests.
+- Built a zero-dependency, sub-microsecond `ModelEvaluator` in Rust (`apps/engine/src/model.rs`) with fail-closed SHA-256 integrity verification, feature normalization, Platt calibration mapping, and abstention gating.
+- Connected model evaluation directly into signal admission (`apps/engine/src/signal.rs`): signals produce true `calibrated: true` win probabilities instead of heuristic quality scores, and candidates failing the abstention threshold are blocked.
+- Updated `/api/health` and the UI ServiceBar to dynamically reflect the deployed model version (`calibrated_model: deployed (champion-v1)`) with a healthy green indicator.
+- Updated `RUNBOOK.md` with direct model training and deployment commands.
+- Verification: 66 Rust tests passed, 50 Python research tests passed, and TypeScript/Vite production build passed cleanly.
+

@@ -86,6 +86,35 @@ Paper positions persist across restarts in `data/paper-account.json`.
 
 ---
 
+## Train & Set Up Calibrated ML Model
+
+To train the champion ML meta-label model, fit probability calibration, evaluate challengers, and deploy the verified model artifact:
+
+```powershell
+cd d:\agent-6
+python scripts/train_model.py
+```
+
+### Options:
+- `--symbol`: Market to train on (default: `BTCUSDT`, e.g., `ETHUSDT`, `SOLUSDT`)
+- `--limit`: Historical candle count (default: `1000`)
+- `--interval`: Kline interval in minutes (default: `1`)
+- `--offline`: Use deterministic synthetic market data if offline
+
+### What it does:
+1. Fetches historical candles from Bybit Linear REST API.
+2. Extracts causal multi-factor features (ADX, RSI, ATR%, MACD, EMAs, VWAP dev, volume ratio, imbalances).
+3. Constructs triple-barrier TP-before-SL meta labels.
+4. Fits regularized weights with purged chronological splits and embargo.
+5. Calibrates raw scores into observed win probabilities using held-out Platt scaling.
+6. Evaluates AUC, Brier score, ECE, and compares against LightGBM and CatBoost challengers.
+7. Computes optimal utility-based `NO_TRADE` abstention threshold.
+8. Exports `models/champion_model.json` with a cryptographic SHA-256 manifest.
+
+When the engine starts, it verifies the model artifact SHA-256 and deploys it. The ServiceBar shows `calibrated model: deployed (champion-v1)` with a green dot, and signals display calibrated win probabilities with abstention filtering.
+
+---
+
 ## Run Tests
 
 ```powershell
