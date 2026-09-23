@@ -53,7 +53,7 @@ This is the working queue for the hourly build automation. Each run should inspe
 ## H10–H12 — Research feature factory
 
 - [x] Polars training dataset builder
-- [ ] regime labels
+- [x] regime labels
 - [ ] multi-timeframe features
 - [x] microstructure features
 - [ ] derivatives features
