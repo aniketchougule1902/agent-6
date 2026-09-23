@@ -68,7 +68,7 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 
 ## H6–H8 — Persistence and replay
 
-- [ ] Typed event store using Parquet/DuckDB
+- [x] Typed event store using Parquet/DuckDB
 - [x] Raw normalized market-event recorder
 - [x] Connect recorder admission to the production live websocket path
 - [x] Deterministic replay clock
