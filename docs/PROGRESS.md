@@ -56,6 +56,13 @@
 - Code commit `7cf7cafcf7d4dc3671c81b8f887232fa3e0d3c02`; tests `0d6bbee898f28a17d61e4264a5c1348a738c5985`.
 - The production recorder/live-state boundary remains the higher-priority engineering gap; this research item was completed independently without weakening the Rust typed decision path.
 
+## 2026-09-23 — Uncertainty/disagreement checkpoint
+
+- Added deterministic ensemble uncertainty features: mean probability, population standard deviation, mean pairwise disagreement, binary predictive entropy and confidence margin.
+- The implementation is pure research-time diagnostics with no fitting step or label access, and fails closed for insufficient, non-finite or out-of-range probabilities.
+- Added tests for consensus, maximally opposed models, certain consensus and malformed inputs.
+- Code commit `b06f2c91c8ee0ec297a0e450aee2d5360059b22c`; tests `a75aca76793226325a9773d05b606466b3f12d47`.
+
 ### Current highest-priority gaps
 
 1. Invoke `append_bybit_message` from the production accepted websocket path; rejected stale/non-monotonic L50 payloads must remain zero-write before live state mutation.
