@@ -10,6 +10,7 @@ mod jev;
 mod indicators;
 mod flags;
 mod live_recorder;
+mod market_event;
 mod microstructure;
 mod outcomes;
 mod replay;
