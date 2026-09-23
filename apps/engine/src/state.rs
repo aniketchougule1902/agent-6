@@ -2,7 +2,7 @@ use crate::{
     config::Config,
     journal::Journal,
     runtime,
-    types::{Candle, ChartFlag, EngineEvent, EngineSnapshot, FeatureSnapshot, TradeSignal, TimeframeAnalysis},
+    types::{Candle, ChartFlag, EngineEvent, EngineSnapshot, FeatureSnapshot, SignalStatus, TradeSignal, TimeframeAnalysis},
 };
 use parking_lot::RwLock;
 use std::{
@@ -163,6 +163,23 @@ impl InternalState {
         while self.signal_history.len() > 500 {
             self.signal_history.pop_front();
         }
+    }
+
+    pub fn invalidate_market_signals(&mut self, now: u64, reason: &str) -> Vec<TradeSignal> {
+        let drained: Vec<_> = self.signals.drain().map(|(_, signal)| signal).collect();
+        let mut invalidated = Vec::new();
+        for mut signal in drained {
+            if matches!(signal.status, SignalStatus::Active | SignalStatus::Tp1Hit) {
+                signal.status = SignalStatus::Invalidated;
+                signal.last_event_ms = now;
+                signal.observed_exit_price = self.last_price;
+                signal.invalidation = format!("{reason} Previous setup retained in signal history.");
+                invalidated.push(signal.clone());
+            }
+            self.archive_signal(signal);
+        }
+        self.active_signal = None;
+        invalidated
     }
 
     pub fn reset_market(&mut self) {
