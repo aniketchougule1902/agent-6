@@ -13,7 +13,7 @@ Open http://127.0.0.1:5173. The launcher builds the release engine and UI, prese
 
 ### Current features and limits
 
-- Persistent $1,000 paper account: manual signal entry, optional browser-session auto-entry, partial TP1, TP2/SL/expiry/manual exits, reset confirmation and archived account history.
+- Persistent $1,000 paper account: manual signal entry, optional browser-session auto-entry, partial TP1, TP2/SL/expiry/manual exits, reset confirmation and archived account history. Signal IDs are deterministic from entry evidence; confirmed opposite setups explicitly mark the prior setup `reversed`, and recent terminal/invalidation history remains visible.
 - Balance, equity, available/reserved funds, fees, realized/unrealized P&L, fills, win rate, profit factor and closed-equity drawdown. Paper positions survive restarts and market changes; fresh quote polling monitors them independently.
 - Background radar scans the 20 highest-volume USDT crypto perpetuals, including eligible meme coins, using 5m formations and 15m confirmation. Ranked and volume views show provisional levels, blockers and observation age. Selecting a row opens that market for full live flow confirmation.
 - Agent activity exposes scan progress, Jev's latest actual response/error and calibration progress. Jev is online only after a successful typed response.
@@ -170,7 +170,7 @@ Use `BTCUSDT`, `ETHUSDT`, or another Bybit linear perpetual symbol supported by 
 
 ### Change market without restarting
 
-With the local engine and dashboard running, use the symbol field and 1m/3m/5m/15m buttons in the dashboard. Symbol changes clear old symbol-specific state, backfill the new market and rebuild the Bybit subscription without restarting the process.
+With the local engine and dashboard running, use the symbol field and 1m/3m/5m/15m buttons in the dashboard. Symbol changes explicitly invalidate any still-open setup, retain it in signal history, clear old symbol-specific market state, backfill the new market and rebuild the Bybit subscription without restarting the process.
 
 The same control is available through the local API:
 
@@ -220,6 +220,10 @@ cd ../..
 python -m pip install -e ./research pytest
 cd research
 python -m pytest -q tests
+
+# Build typed DuckDB + Parquet storage from the normalized recorder
+cd ..
+python scripts/build_event_store.py --overwrite
 ```
 
 ### Hourly 24-hour verification
@@ -264,6 +268,8 @@ The first gateway targets Bybit V5 public linear-perpetual endpoints:
 The implementation uses documented heartbeat/reconnect behavior and keeps exchange-specific code behind an adapter so Binance/OKX/Coinbase/Hyperliquid can be added later.
 
 Historical backfill retries every 15 seconds when Bybit REST is unavailable and can use Bybit's documented alternate mainnet host `api.bytick.com`. The health endpoint reports `ok=false` until live data and enough history produce features; the dashboard shows **WARMING** during this period.
+
+Accepted WebSocket payloads are normalized once, validated, atomically recorded to `A6_MARKET_RECORD_PATH`, and the exact same typed events mutate live Rust market state. `python scripts/build_event_store.py --overwrite` converts that JSONL into typed Zstd Parquet plus DuckDB for offline research. Strict replay now requires exact kline `start_ms`/`end_ms`; recordings created before that schema addition should be treated as legacy and re-recorded or explicitly migrated rather than silently replayed. REST bootstrap candles are still a documented replay-parity gap, so full startup-equivalent feature/signal replay is not yet claimed complete.
 
 ## License
 
