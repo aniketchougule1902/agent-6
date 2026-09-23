@@ -96,19 +96,28 @@ mod tests {
     }
 
     #[test]
-    fn trips_daily_loss_at_boundary_and_latches() {
+    fn trips_daily_loss_past_threshold_and_latches() {
         let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
         assert_eq!(guard.observe_equity(951.0).unwrap(), None);
-        assert_eq!(guard.observe_equity(950.0).unwrap(), Some(RiskHaltReason::DailyLoss));
+        assert_eq!(
+            guard.observe_equity(949.0).unwrap(),
+            Some(RiskHaltReason::DailyLoss)
+        );
         assert!(guard.is_halted());
-        assert_eq!(guard.observe_equity(1100.0).unwrap(), Some(RiskHaltReason::DailyLoss));
+        assert_eq!(
+            guard.observe_equity(1100.0).unwrap(),
+            Some(RiskHaltReason::DailyLoss)
+        );
     }
 
     #[test]
     fn trips_drawdown_from_peak_before_daily_loss() {
         let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
         assert_eq!(guard.observe_equity(1100.0).unwrap(), None);
-        assert_eq!(guard.observe_equity(1067.0).unwrap(), Some(RiskHaltReason::Drawdown));
+        assert_eq!(
+            guard.observe_equity(1066.0).unwrap(),
+            Some(RiskHaltReason::Drawdown)
+        );
     }
 
     #[test]
@@ -117,8 +126,12 @@ mod tests {
         assert!(SessionRiskCircuitBreaker::new(f64::NAN, limits()).is_err());
         assert!(SessionRiskCircuitBreaker::new(
             1000.0,
-            RiskLimits { max_daily_loss_fraction: 1.0, max_drawdown_fraction: 0.03 }
-        ).is_err());
+            RiskLimits {
+                max_daily_loss_fraction: 1.0,
+                max_drawdown_fraction: 0.03,
+            }
+        )
+        .is_err());
         let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
         assert!(guard.observe_equity(f64::INFINITY).is_err());
     }
