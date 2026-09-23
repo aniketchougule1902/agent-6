@@ -215,8 +215,9 @@ function Chart({ snapshot, timeframe, tickSize }: { snapshot: EngineSnapshot; ti
       .filter(f => times.has(f.time)).sort((a,b)=>a.time-b.time || a.ts_ms-b.ts_ms);
     const markers: SeriesMarker<Time>[] = flags.map(f => {
       const entry=f.kind==="signal";
-      const label=entry?(f.side==="long"?"ENTRY LONG":"ENTRY SHORT"):f.kind==="stop_loss"?"SL EXIT":f.kind==="tp2"?"TP2 EXIT":f.kind==="tp1"?"TP1 TOUCH":"EXPIRED";
-      return {time:f.time,id:f.id,price:f.price,position:"atPriceMiddle",shape:entry?(f.side==="long"?"arrowUp":"arrowDown"):"square",color:entry?"#f7bb54":f.kind==="stop_loss"?"#ff5c75":"#35d399",text:`${f.timeframe}m ${label} ${price(f.price)}`,size:1};
+      const label=entry?(f.side==="long"?"ENTRY LONG":"ENTRY SHORT"):f.kind==="stop_loss"?"SL EXIT":f.kind==="tp2"?"TP2 EXIT":f.kind==="tp1"?"TP1 TOUCH":f.kind==="reversed"?"REVERSED":f.kind==="invalidated"?"INVALIDATED":"EXPIRED";
+      const endedByThesis=f.kind==="reversed"||f.kind==="invalidated";
+      return {time:f.time,id:f.id,price:f.price,position:"atPriceMiddle",shape:entry?(f.side==="long"?"arrowUp":"arrowDown"):"square",color:entry?"#f7bb54":f.kind==="stop_loss"?"#ff5c75":endedByThesis?"#f59e0b":"#35d399",text:`${f.timeframe}m ${label} ${price(f.price)}`,size:1};
     });
     markersRef.current?.setMarkers(markers);
   }, [snapshot.chart_flags, snapshot.active_signal?.timeframe, candles, timeframe, allFlags]);
