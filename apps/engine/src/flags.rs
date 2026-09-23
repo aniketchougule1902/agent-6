@@ -2,7 +2,7 @@ use crate::types::{ChartFlag, EngineEvent};
 use std::{collections::VecDeque,fs::File,io::{BufRead,BufReader,Seek,SeekFrom},path::Path};
 
 pub fn from_event(event: &EngineEvent) -> Option<ChartFlag> {
-    if !["signal","tp1","tp2","stop_loss","expired"].contains(&event.event_type.as_str()) {return None;}
+    if !["signal","tp1","tp2","stop_loss","expired","reversed","invalidated"].contains(&event.event_type.as_str()) {return None;}
     let signal=event.signal.as_ref()?;
     let price=if event.event_type=="signal" {(signal.entry_low+signal.entry_high)/2.0} else {signal.observed_exit_price?};
     Some(ChartFlag {id:format!("{}:{}",signal.id,event.event_type),symbol:signal.symbol.clone(),timeframe:signal.timeframe.clone(),ts_ms:event.ts_ms,price,side:signal.side.clone(),kind:event.event_type.clone()})
