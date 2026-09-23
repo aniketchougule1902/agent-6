@@ -44,18 +44,17 @@
 
 ## 2026-09-23 — L50 recorder zero-write regression checkpoint
 
-### Completed
-
 - Added a filesystem-level regression test around the real `AcceptedMarketRecorder::append_bybit_message` path.
-- The test writes a valid Bybit L50 snapshot, submits a stale/non-monotonic delta, and verifies the rejected payload does not change the recording byte length.
-- It then submits the next valid monotonic delta and verifies exactly two typed events exist, proving the rejected payload also did not advance the admission cursor.
-- This closes a missing proof around the recorder's atomic rejection contract before wiring the recorder into the production websocket handler.
+- The test writes a valid Bybit L50 snapshot, submits a stale/non-monotonic delta, and verifies the rejected payload does not change the recording byte length or admission cursor.
+- Zero-write regression commit `b24b98af88ec6582b3ed7507abf9f17d86db67e1`; documentation head `1d01bbe2003019342c3cc28dbd9b409c47f854e2` passed Actions run `35809132695`.
 
-### Validation
+## 2026-09-23 — Causal regime-label checkpoint
 
-- Previous simulator-hardening head `bd2f1c8ce3a10481d443d699c1577a83ef2595a4` is confirmed green in Actions run `35805310017`.
-- Zero-write regression commit: `b24b98af88ec6582b3ed7507abf9f17d86db67e1`.
-- Actions run `35809108514` was queued immediately after the commit; do not claim this checkpoint green until it completes.
+- Added deterministic causal `warmup` / `quiet` / `trend_up` / `trend_down` / `volatile` research labels from trailing log returns and realized volatility.
+- Volatility thresholds use only expanding historical realized-volatility observations; no centered or future window is used.
+- Added prefix-invariance regression coverage proving future prices cannot alter historical regime labels, plus trend-direction and fail-closed input tests.
+- Code commit `7cf7cafcf7d4dc3671c81b8f887232fa3e0d3c02`; tests `0d6bbee898f28a17d61e4264a5c1348a738c5985`.
+- The production recorder/live-state boundary remains the higher-priority engineering gap; this research item was completed independently without weakening the Rust typed decision path.
 
 ### Current highest-priority gaps
 
@@ -63,6 +62,6 @@
 2. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 3. Add Parquet/DuckDB typed persistence.
 4. Drive the execution simulator from replay for end-to-end outcome evaluation.
-5. Add regime/multi-timeframe/derivatives research features, then champion/challenger registry and rollback.
+5. Add multi-timeframe/derivatives research features, then champion/challenger registry and rollback.
 
 Real-money autonomous execution remains absent/disabled.
