@@ -117,6 +117,8 @@ impl AcceptedMarketRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::replay::read_recording;
+    use std::{fs, time::{SystemTime, UNIX_EPOCH}};
 
     fn book(seq: u64, update_id: u64, snapshot: bool) -> NormalizedMarketEvent {
         NormalizedMarketEvent::OrderBook {
@@ -128,6 +130,17 @@ mod tests {
             bids: vec![(100.0, 1.0)],
             asks: vec![(101.0, 1.0)],
         }
+    }
+
+    fn temp_recording_path() -> std::path::PathBuf {
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        std::env::temp_dir().join(format!("agent6-live-recorder-{nonce}.jsonl"))
+    }
+
+    fn bybit_book(kind: &str, seq: u64, update_id: u64) -> String {
+        format!(
+            r#"{{"topic":"orderbook.50.BTCUSDT","type":"{kind}","ts":{seq},"data":{{"s":"BTCUSDT","b":[["100","1"]],"a":[["101","1"]],"u":{update_id},"seq":{seq},"cts":{seq}}}}}"#
+        )
     }
 
     #[test]
@@ -172,5 +185,25 @@ mod tests {
         assert!(gate.accept(&book(10, 101, false)).is_err());
         let mut restored = before;
         assert!(restored.accept(&book(11, 101, false)).is_ok());
+    }
+
+    #[test]
+    fn rejected_bybit_l50_payload_is_zero_write_and_does_not_advance_cursor() {
+        let path = temp_recording_path();
+        let mut recorder = AcceptedMarketRecorder::open(&path).unwrap();
+
+        assert_eq!(recorder.append_bybit_message(&bybit_book("snapshot", 10, 100)).unwrap(), 1);
+        let bytes_after_snapshot = fs::metadata(&path).unwrap().len();
+
+        assert!(recorder.append_bybit_message(&bybit_book("delta", 10, 101)).is_err());
+        assert_eq!(fs::metadata(&path).unwrap().len(), bytes_after_snapshot);
+
+        assert_eq!(recorder.append_bybit_message(&bybit_book("delta", 11, 101)).unwrap(), 1);
+        let events = read_recording(&path).unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(matches!(events[0], NormalizedMarketEvent::OrderBook { snapshot: true, seq: 10, update_id: 100, .. }));
+        assert!(matches!(events[1], NormalizedMarketEvent::OrderBook { snapshot: false, seq: 11, update_id: 101, .. }));
+
+        fs::remove_file(path).unwrap();
     }
 }
