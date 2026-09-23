@@ -2,7 +2,7 @@
 """Train, calibrate, evaluate, and export the Agent-6 champion ML model.
 
 This script:
-1. Fetches historical candles from Bybit V5 REST API (or generates realistic synthetic data if offline).
+1. Fetches real historical candles from Bybit V5 REST API and fails closed when market data is unavailable.
 2. Computes causal technical & microstructure features matching the Rust engine.
 3. Computes triple-barrier TP-before-SL meta-labels.
 4. Splits data chronologically with an embargo gap to prevent lookahead leakage.
