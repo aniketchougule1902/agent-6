@@ -8,7 +8,6 @@ use crate::{
 };
 use std::{collections::VecDeque, time::Duration};
 use tokio::time;
-use uuid::Uuid;
 
 pub async fn run_loop(state: AppState) {
     let mut ticker = time::interval(Duration::from_millis(400));
@@ -238,13 +237,18 @@ fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbo
     reasons.extend(ml_reasons);
 
     Some(TradeSignal {
-        id:Uuid::new_v4().to_string(),symbol:symbol.into(),timeframe:a.timeframe.clone(),side,status:SignalStatus::Active,
+        id:stable_signal_id(symbol, &a.timeframe, a.candle_ms, &side),symbol:symbol.into(),timeframe:a.timeframe.clone(),side,status:SignalStatus::Active,
         created_at_ms:now,last_event_ms:now,observed_exit_price:None,
         entry_low:price,entry_high:price,stop_loss,tp1,tp2,risk_reward_tp2:rr,
         confidence,calibrated,
         invalidation:format!("Paper reference entry. Stop {:.10}; expires in {} minutes. Net estimated TP2 R:R {:.2}.",stop_loss,hold_ms(&a.timeframe)/60_000,(actual_reward-cost)/(actual_risk+cost)),
         reasons,
     })
+}
+
+fn stable_signal_id(symbol: &str, timeframe: &str, candle_ms: u64, side: &Side) -> String {
+    let side = if matches!(side, Side::Long) { "long" } else { "short" };
+    format!("{symbol}:{timeframe}:{candle_ms}:{side}")
 }
 
 fn rounded_levels(price:f64,direction:f64,risk:f64,rr:f64,tick:f64)->Option<(f64,f64,f64)> {
@@ -473,6 +477,16 @@ fn signed_unit(value: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signal_identity_is_stable_for_same_entry_evidence() {
+        let first = stable_signal_id("BTCUSDT", "1", 1_700_000_000_000, &Side::Long);
+        let second = stable_signal_id("BTCUSDT", "1", 1_700_000_000_000, &Side::Long);
+        let opposite = stable_signal_id("BTCUSDT", "1", 1_700_000_000_000, &Side::Short);
+        assert_eq!(first, second);
+        assert_ne!(first, opposite);
+        assert_eq!(first, "BTCUSDT:1:1700000000000:long");
+    }
 
     #[test]
     fn normalized_flow_is_bounded() {
