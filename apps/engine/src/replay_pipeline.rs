@@ -34,9 +34,11 @@ pub fn run_production_replay(
     config: &Config,
     market: &RuntimeMarketConfig,
     events: Vec<NormalizedMarketEvent>,
+    tick_size: f64,
     model: Option<ModelEvaluator>,
 ) -> Result<ReplayReport> {
     ensure!(!events.is_empty(), "cannot replay an empty recording");
+    ensure!(tick_size.is_finite() && tick_size > 0.0, "replay tick_size must be finite and positive");
     let replay = DeterministicReplay::try_new(events)?;
 
     let mut inner = InternalState::new();
@@ -66,6 +68,7 @@ pub fn run_production_replay(
             config,
             frame.replay_ts_ms,
             market,
+            Some(tick_size),
         ));
         evaluation_ticks += 1;
     }
@@ -156,10 +159,24 @@ mod tests {
     }
 
     #[test]
+    fn replay_rejects_missing_instrument_tick_metadata() {
+        let error = run_production_replay(
+            &config(),
+            &market(),
+            bootstrap_events(),
+            0.0,
+            None,
+        )
+        .err()
+        .expect("invalid tick size must fail");
+        assert!(error.to_string().contains("tick_size"));
+    }
+
+    #[test]
     fn replay_runs_bootstrap_and_live_events_through_production_core_deterministically() {
         let events = bootstrap_events();
-        let first = run_production_replay(&config(), &market(), events.clone(), None).unwrap();
-        let second = run_production_replay(&config(), &market(), events, None).unwrap();
+        let first = run_production_replay(&config(), &market(), events.clone(), 0.1, None).unwrap();
+        let second = run_production_replay(&config(), &market(), events, 0.1, None).unwrap();
 
         assert_eq!(first.frames, 242);
         assert_eq!(first.evaluation_ticks, first.frames);
