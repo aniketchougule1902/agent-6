@@ -44,7 +44,7 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
     const stored = localStorage.getItem("a6_paper_notional");
     return stored ? Number(stored) : 100;
   });
-  const [autoEnter, setAutoEnter] = useState(() => localStorage.getItem("a6_auto_enter") === "true");
+  const [autoEnter, setAutoEnter] = useState(false);
   const [showClosed, setShowClosed] = useState(false);
   const [resetConfirm, setResetConfirm] = useState(false);
   const lastAutoSignal = useRef("");
@@ -52,14 +52,14 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
   const refresh = useCallback(async () => {
     try {
       const r = await fetch(PAPER_API);
-      if (r.ok) { setView(await r.json()); setError(null); }
-    } catch { /* silent */ }
+      if (r.ok) { setView(await r.json()); }
+    } catch { setError("Paper account unavailable; displayed values may be stale"); }
   }, []);
 
   useEffect(() => { void refresh(); const t = setInterval(refresh, 3000); return () => clearInterval(t); }, [refresh]);
 
   useEffect(() => { localStorage.setItem("a6_paper_notional", String(notional)); }, [notional]);
-  useEffect(() => { localStorage.setItem("a6_auto_enter", String(autoEnter)); }, [autoEnter]);
+
 
   const enter = useCallback(async (signalId: string, amt: number) => {
     setBusy(true); setError(null);
@@ -97,7 +97,7 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
 
   // Auto-enter on new signal
   useEffect(() => {
-    if (!autoEnter || !signal || signal.status !== "active") return;
+    if (!autoEnter || busy || !view || !signal || signal.status !== "active" || snapshot.feed_stale || !snapshot.connected) return;
     if (signal.id === lastAutoSignal.current) return;
     // Check if already entered this signal
     if (view?.account.positions.some(p => p.signal_id === signal.id)) {
@@ -107,7 +107,7 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
     lastAutoSignal.current = signal.id;
     const amt = notional > 0 ? notional : 100;
     void enter(signal.id, amt);
-  }, [autoEnter, signal, enter, notional, view]);
+  }, [autoEnter, signal, enter, notional, view, busy, snapshot.feed_stale, snapshot.connected]);
 
   const now = Date.now();
   const open = view?.account.positions.filter(p => p.remaining > 0) ?? [];
@@ -157,12 +157,13 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
       <span>Trades <b>{snapshot.paper_closed_count}</b></span>
       <span>Win rate <b className={pnlClass((snapshot.paper_win_rate ?? 0) - 0.5)}>{snapshot.paper_win_rate != null ? `${(snapshot.paper_win_rate * 100).toFixed(1)}%` : "—"}</b></span>
       <span>Profit factor <b>{snapshot.paper_profit_factor != null ? snapshot.paper_profit_factor.toFixed(2) : "—"}</b></span>
-      <span>Max DD <b className="negative">{snapshot.paper_max_drawdown > 0 ? `-${price(snapshot.paper_max_drawdown)}` : "—"}</b></span>
+      <span>Closed DD <b className="negative">{snapshot.paper_max_drawdown > 0 ? `-${price(snapshot.paper_max_drawdown)}` : "—"}</b></span>
       <span>Fees <b>{price(snapshot.paper_fees)}</b></span>
       <span>Open <b>{snapshot.paper_open_count}</b></span>
     </div>
 
-    {error && <div className="paper-error">{error}</div>}
+    {(error||view?.error)&&<div className="paper-error">{error||view?.error}</div>}
+    <p className="muted">Monitoring: {view?.monitoring??"connecting"} | Available ${price(view?.available??0)} | Reserved ${price(view?.reserved??0)}. Auto-entry only runs while this browser tab is open.</p>
 
     {/* Enter signal button */}
     {canEnter && <div className="paper-enter-row">
@@ -222,6 +223,7 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
       </div>
     </details>}
 
+    {view&&view.account.fills.length>0&&<details><summary className="paper-section-title">Execution ledger ({view.account.fills.length} fills)</summary><div className="paper-ledger">{view.account.fills.slice(-30).reverse().map((f,i)=><div key={`${f.ts_ms}-${i}`}><time>{new Date(f.ts_ms).toLocaleTimeString()}</time><strong>{f.kind.toUpperCase()}</strong><span>{price(f.quantity)} @ {price(f.price)}</span><span>Fee {f.fee.toFixed(4)}</span><span className={pnlClass(f.pnl)}>Net {f.pnl.toFixed(4)}</span></div>)}</div></details>}
     {!view && <p className="muted">Loading paper account…</p>}
   </section>;
 }

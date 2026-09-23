@@ -1,169 +1,93 @@
-# Agent-6 Runbook
+# Agent-6 local paper terminal runbook
 
-Copy-paste commands to start the system. Two terminals required.
+Single-user local paper trading. No real-money orders. This is not a certified unattended production trading platform.
 
----
+## One-command start (PowerShell)
 
-## Prerequisites
-
-| Tool        | Check                | Install                                      |
-|-------------|----------------------|----------------------------------------------|
-| Rust        | `rustc --version`    | https://rustup.rs                            |
-| Node.js 18+ | `node --version`    | https://nodejs.org                           |
-| Git         | `git --version`      | https://git-scm.com                          |
-
----
-
-## Quick Start
-
-### Terminal 1 — Engine
+Prerequisites: Rust stable, Node.js 22.12+ or 24+, Python 3.12+.
 
 ```powershell
-cd d:\agent-6
+cd D:\agent-6
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
+```
+
+Builds the release engine and UI, starts services hidden, and checks HTTP readiness. First build can take several minutes. Existing `.env` is preserved. Open http://127.0.0.1:5173 and enable browser alarms.
+
+Already built:
+
+```powershell
+cd D:\agent-6
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1 -SkipBuild
+```
+
+Stop launcher-owned services:
+
+```powershell
+cd D:\agent-6
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\stop.ps1
+```
+
+For upgrades, stop first and start without SkipBuild. Manually launched terminals must be stopped with Ctrl+C. Logs are under `data/logs/`.
+
+## Research and calibration
+
+```powershell
+cd D:\agent-6
+python -m pip install -e .\research pytest
+python -m pytest -q .\research\tests
+python .\scripts\calibrate_signals.py
+```
+
+The engine runs calibration every five minutes. Only real versioned signal outcomes qualify. Deployment requires at least 500 completed outcomes, both classes, purged chronological train/calibration/test partitions, independent test Brier below baseline, and ECE <= 0.08. Until then the app reports collecting/rejected, not invented accuracy. The model estimates TP2-before-stop/expiry, not net account profitability. Legacy `scripts/train_model.py` and candle-proxy artifacts are research only and cannot pass this live deployment gate.
+
+Set TYPESAFE_API_KEY in `.env` and restart for Jev. Green online means a recent valid response; last review and errors appear in Agent activity. Reviews cover new setups and periodic market context. Jev never authorizes orders or supplies calibrated trade accuracy.
+
+## Paper account
+
+- Starts at $1,000. Enter a dollar notional from an active signal. Entry uses current bid/ask plus simulated slippage, never the old signal price.
+- At 1x, notional is reserved; fees are 5.5 bps and simulated slippage 0.35 bps each way. TP1 closes half; TP2, SL, expiry or manual Close exits the rest.
+- Fractional simulated quantities are supported. Funding, liquidation, queue position and exchange order constraints are not modeled.
+- Positions survive symbol changes and restarts. Fresh quote polling runs every two seconds for open symbols. During outages exits pause; crossings between observations may be missed.
+- Account shows balance, equity, reserved/available funds, realized/unrealized P&L, fees, fills, win rate, profit factor and closed-equity drawdown.
+- Reset requires confirmation, archives the old account, cancels paper positions and restores $1,000.
+- Auto-enter is off after reload. It is a browser-session option and requires the tab to remain open. Scanner candidates never auto-enter.
+
+## Market radar
+
+Sidebar monitors the top 20 active USDT crypto perpetuals by 24h quote turnover; stock, ETF, commodity and forex contracts are excluded. It scans 5m setups with 15m confirmation, ranks technical quality and shows forming/candidate/watch phases. Provisional watch/SL/TP levels require full live order-flow confirmation on the selected market before paper entry. These rankings are not validated probabilities. Scans refresh about once per minute; rows older than 180 seconds are marked stale.
+
+The chart supports 1m/3m/5m/15m. Only the selected market receives the full live order-book/trade-flow signal pipeline. Existing paper positions have independent quote monitoring.
+
+## Data, security and recovery
+
+Paper state: `data/paper-account.json`; reset archives: `data/paper-account-archive-*.json`. Back up while stopped. Persistence failure rejects mutations. Corrupt account JSON prevents startup instead of silently resetting money.
+
+Live journal and market recordings are preserved for audit/calibration. Generated screenshots are archived under `data/archive`. Scripted demo endpoints and UI are removed.
+
+The API binds only to loopback and rejects unapproved browser origins. Remote/multi-user deployment needs authentication, TLS, durable storage, monitoring and further load/failure testing.
+
+## Manual development
+
+Terminal 1:
+
+```powershell
+cd D:\agent-6
 cargo run -p agent6-engine
 ```
 
-Wait until you see: `Agent-6 local engine started`
-
-### Terminal 2 — Dashboard
+Terminal 2:
 
 ```powershell
-cd d:\agent-6\apps\ui
-npm install
-npm run dev
+cd D:\agent-6\apps\ui
+npm ci
+npm run dev -- --host 127.0.0.1
 ```
 
-### Open Dashboard
-
-Open in browser: **http://127.0.0.1:5173**
-
-Click **ENABLE ALARMS** for browser audio alerts.
-
----
-
-## Environment Configuration
-
-Copy `.env.example` to `.env` and edit:
+Validation:
 
 ```powershell
-cd d:\agent-6
-copy .env.example .env
-```
-
-Key settings in `.env`:
-
-```env
-# Market to track (any Bybit linear perpetual)
-A6_SYMBOL=BTCUSDT
-
-# Chart timeframe: 1, 3, 5, or 15 (minutes)
-A6_TIMEFRAME=3
-
-# Jev qualitative review (optional — obtain from TypeSafe)
-TYPESAFE_API_KEY=
-
-# Estimated round-trip trading costs in basis points
-A6_ROUND_TRIP_COST_BPS=12
-
-# Signal quality and reward/risk minimums
-A6_MIN_SIGNAL_SCORE=0.74
-A6_MIN_RR=1.8
-```
-
----
-
-## Paper Trading
-
-The dashboard starts with a **$1,000 paper balance**. When a signal fires:
-
-1. Click **Enter LONG/SHORT** to open a paper position (set your notional)
-2. Or enable **Auto-enter** to automatically enter on every new signal
-3. The engine monitors TP1, TP2 and stop loss using live exchange prices
-4. Click **Close** on any open position to exit at market
-5. Click **Reset** to archive the account and start fresh at $1,000
-
-Paper positions persist across restarts in `data/paper-account.json`.
-
----
-
-## Train & Set Up Calibrated ML Model
-
-To train the champion ML meta-label model, fit probability calibration, evaluate challengers, and deploy the verified model artifact:
-
-```powershell
-cd d:\agent-6
-python scripts/train_model.py
-```
-
-### Options:
-- `--symbol`: Market to train on (default: `BTCUSDT`, e.g., `ETHUSDT`, `SOLUSDT`)
-- `--limit`: Historical candle count (default: `1000`)
-- `--interval`: Kline interval in minutes (default: `1`)
-- `--offline`: Use deterministic synthetic market data if offline
-
-### What it does:
-1. Fetches historical candles from Bybit Linear REST API.
-2. Extracts causal multi-factor features (ADX, RSI, ATR%, MACD, EMAs, VWAP dev, volume ratio, imbalances).
-3. Constructs triple-barrier TP-before-SL meta labels.
-4. Fits regularized weights with purged chronological splits and embargo.
-5. Calibrates raw scores into observed win probabilities using held-out Platt scaling.
-6. Evaluates AUC, Brier score, ECE, and compares against LightGBM and CatBoost challengers.
-7. Computes optimal utility-based `NO_TRADE` abstention threshold.
-8. Exports `models/champion_model.json` with a cryptographic SHA-256 manifest.
-
-When the engine starts, it verifies the model artifact SHA-256 and deploys it. The ServiceBar shows `calibrated model: deployed (champion-v1)` with a green dot, and signals display calibrated win probabilities with abstention filtering.
-
----
-
-## Run Tests
-
-```powershell
-cd d:\agent-6
+cd D:\agent-6
 cargo test --workspace
+npm run build --prefix apps/ui
+python -m pytest -q research/tests
 ```
-
-```powershell
-cd d:\agent-6\apps\ui
-npm run build
-```
-
----
-
-## Change Market
-
-Use the search bar in the dashboard to switch to any Bybit linear perpetual (e.g., ETHUSDT, SOLUSDT, 1000PEPEUSDT, DOGEUSDT).
-
-Or via API:
-
-```powershell
-curl -X POST http://127.0.0.1:8787/api/market -H "Content-Type: application/json" -d "{\"symbol\":\"ETHUSDT\",\"timeframe\":\"5\"}"
-```
-
----
-
-## Troubleshooting
-
-| Issue                        | Fix                                                                 |
-|------------------------------|---------------------------------------------------------------------|
-| Engine won't start           | Check `cargo build -p agent6-engine` for compile errors             |
-| UI shows "Connecting..."     | Ensure engine is running on port 8787                               |
-| No candles loading           | Wait 30–60s for Bybit REST backfill; check internet connection      |
-| Jev not working              | Set `TYPESAFE_API_KEY` in `.env`; restart engine                    |
-| Paper account corrupted      | Delete `data/paper-account.json` and restart                        |
-| Port in use                  | Change `A6_HTTP_ADDR` in `.env` (default: `127.0.0.1:8787`)        |
-
----
-
-## Architecture
-
-```
-d:\agent-6\
-├── apps/engine/     Rust engine — Bybit feed, signals, paper trading, API
-├── apps/ui/         React + Vite dashboard
-├── data/            Runtime data (journal, paper account, market events)
-├── docs/            Architecture, progress, roadmap
-├── research/        Python research modules
-└── scripts/         Utility scripts
-```
-
-Engine serves HTTP API on `:8787`, dashboard proxies through Vite on `:5173`.

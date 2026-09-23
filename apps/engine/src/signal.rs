@@ -69,7 +69,7 @@ pub async fn run_loop(state: AppState) {
                             let pred = model.predict(&features, analysis);
                             if pred.abstain {
                                 analysis.blockers.push(format!(
-                                    "ML model abstention: win probability {:.1}% below threshold {:.1}%",
+                                    "ML model abstention: TP2 outcome probability {:.1}% below threshold {:.1}%",
                                     pred.calibrated_probability * 100.0,
                                     pred.threshold * 100.0
                                 ));
@@ -226,6 +226,8 @@ fn build_signal(state:&AppState, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbo
     };
 
     let mut reasons = vec![
+        "strategy:a6-live-v2".into(),
+        format!("raw-quality:{:.10}",a.quality),
         a.setup.replace('_'," "),
         format!("Closed {}m candle",a.timeframe),
         format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),

@@ -227,7 +227,8 @@ impl AppState {
     pub fn new(config: Config) -> anyhow::Result<Self> {
         let (events, _) = broadcast::channel(512);
         let model = match crate::model::ModelEvaluator::load_from_file(&config.model_path) {
-            Ok(m) => Some(m),
+            Ok(m) if m.deployment_allowed() => Some(m),
+            Ok(_) => {tracing::warn!("Model blocked: independent live outcome validation required");None},
             Err(e) => {
                 tracing::info!(path = %config.model_path.display(), error = %e, "No calibrated champion model loaded; falling back to rule-based paper scoring");
                 None

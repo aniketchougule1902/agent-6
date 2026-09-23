@@ -1,5 +1,5 @@
 mod paper;
-mod demo;
+mod scanner;
 mod catalog;
 mod api;
 mod bybit;
@@ -35,6 +35,7 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let config = Config::from_env()?;
+    anyhow::ensure!(config.http_addr.ip().is_loopback(),"This paper terminal binds only to loopback; remote deployment requires authentication and TLS");
     runtime::init(&config)?;
     let state = AppState::new(config.clone())?;
 
@@ -44,6 +45,8 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(signal::run_loop(state.clone()));
     tokio::spawn(jev::run(state.clone()));
     tokio::spawn(paper::run(state.clone()));
+    tokio::spawn(scanner::run(state.clone()));
+    tokio::spawn(model::watch(state.clone()));
 
     let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
     let market = runtime::current();

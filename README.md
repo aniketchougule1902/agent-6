@@ -1,3 +1,25 @@
+> Current operation: see [runbook.md](RUNBOOK.md) for the one-command launcher and current limits. The demo has been removed. The local paper account starts at $1,000. Market Radar ranks the top 20 USDT crypto perpetual markets by technical setup quality; rankings are not win probabilities. Legacy calibration artifacts are blocked until independent live-outcome validation passes. Historical checkpoints below describe earlier versions.
+
+## Start the current app
+
+Requires Rust stable, Node.js 22.12+ or 24+, and Python 3.12+. In PowerShell:
+
+```powershell
+cd D:\agent-6
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\start.ps1
+```
+
+Open http://127.0.0.1:5173. The launcher builds the release engine and UI, preserves existing configuration, starts both services hidden and checks HTTP readiness. See the runbook for stop, restart, dependency installation and recovery commands.
+
+### Current features and limits
+
+- Persistent $1,000 paper account: manual signal entry, optional browser-session auto-entry, partial TP1, TP2/SL/expiry/manual exits, reset confirmation and archived account history.
+- Balance, equity, available/reserved funds, fees, realized/unrealized P&L, fills, win rate, profit factor and closed-equity drawdown. Paper positions survive restarts and market changes; fresh quote polling monitors them independently.
+- Background radar scans the 20 highest-volume USDT crypto perpetuals, including eligible meme coins, using 5m formations and 15m confirmation. Ranked and volume views show provisional levels, blockers and observation age. Selecting a row opens that market for full live flow confirmation.
+- Agent activity exposes scan progress, Jev's latest actual response/error and calibration progress. Jev is online only after a successful typed response.
+- Live calibration collects versioned, observed outcomes and runs every five minutes. At least 500 outcomes and independent validation gates are required before deployment. Until then quality scores remain heuristic; 90% accuracy is not established.
+- Single-user local paper terminal. No real-money execution. Remote production hosting still requires authentication, TLS, durable multi-user storage and operational testing. Quote polling can miss price crossings between observations.
+
 # Agent-6 — Local Crypto Scalping Research & Signal Engine
 
 Agent-6 is a **local-first, continuously running crypto market analysis workstation**. It watches live exchange data, builds multi-timeframe and microstructure features, emits typed trade setups, tracks TP/SL lifecycle events, rings audible alerts, journals every decision, and provides a gated path for self-improving models.
@@ -282,15 +304,6 @@ Search by coin or ticker using the top combobox (arrow keys, Enter, Escape suppo
 
 Data contract: https://bybit-exchange.github.io/docs/v5/market/instrument
 Chart API: https://tradingview.github.io/lightweight-charts/docs/api/interfaces/IChartApi
-
-## Isolated paper demo
-
-Open http://127.0.0.1:5173/?demo=win or click Paper demo. The synthetic path plays in about eight seconds. Replay with sound enables audio; Show scripted loss exercises the stop path.
-
-The manually seeded setup uses 10 units, reference entry 100, stop 99, TP1 101.4 and TP2 102.5. Half exits at each target. Production lifecycle and fill-simulation functions calculate the result, including simulated spread, slippage and fees. The scripted winning path produces approximately +18.0968 USDT net. This is software verification, not a live trade, strategy prediction or measured win rate. Demo events never enter the live journal.
-
-Stateless endpoints: GET /api/demo/win and GET /api/demo/loss. Validation: 63 Rust tests, 46 Python research tests and UI production build pass. Python research libraries are offline tools; no calibrated model is deployed. Live market, catalog, signal and optional Jev workers start together with the Rust engine.
-
 
 ## Cross-timeframe visibility fix
 

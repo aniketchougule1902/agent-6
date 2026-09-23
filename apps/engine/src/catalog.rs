@@ -5,6 +5,7 @@ use tokio::sync::Mutex;
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Instrument {
     pub symbol: String,
+    #[serde(default)] pub asset_type: String,
     pub base: String,
     pub quote: String,
     pub tick_size: String,
@@ -37,7 +38,7 @@ pub async fn get(testnet: bool) -> Catalog {
 }
 fn parse(v:&serde_json::Value)->Option<Instrument> {
     if v["status"]!="Trading" || v["contractType"]!="LinearPerpetual" {return None;}
-    Some(Instrument {symbol:v["symbol"].as_str()?.into(),base:v["baseCoin"].as_str()?.into(),quote:v["quoteCoin"].as_str()?.into(),tick_size:v["priceFilter"]["tickSize"].as_str()?.into(),min_qty:v["lotSizeFilter"]["minOrderQty"].as_str()?.into(),qty_step:v["lotSizeFilter"]["qtyStep"].as_str()?.into()})
+    Some(Instrument {asset_type:v["symbolType"].as_str().unwrap_or("").into(),symbol:v["symbol"].as_str()?.into(),base:v["baseCoin"].as_str()?.into(),quote:v["quoteCoin"].as_str()?.into(),tick_size:v["priceFilter"]["tickSize"].as_str()?.into(),min_qty:v["lotSizeFilter"]["minOrderQty"].as_str()?.into(),qty_step:v["lotSizeFilter"]["qtyStep"].as_str()?.into()})
 }
 async fn fetch(testnet:bool)->anyhow::Result<Vec<Instrument>> {
     let client=reqwest::Client::builder().timeout(Duration::from_secs(12)).build()?;

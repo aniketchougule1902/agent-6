@@ -24,13 +24,14 @@ pub fn router(state: AppState) -> Router {
         .route("/api/paper/enter",post(paper_enter))
         .route("/api/paper/close",post(paper_close))
         .route("/api/paper/reset",post(paper_reset))
-        .route("/api/demo/win", get(|| async { demo_result(true) }))
-        .route("/api/demo/loss", get(|| async { demo_result(false) }))
+        .route("/api/scanner", get(|| async {Json(crate::scanner::snapshot())}))
         .route("/api/instruments", get(instruments))
         .route("/api/state", get(snapshot))
         .route("/api/market", get(market_config).post(update_market))
         .route("/ws", get(ws_upgrade))
-        .layer(CorsLayer::permissive())
+        .layer(axum::extract::DefaultBodyLimit::max(16*1024))
+        .layer(axum::middleware::from_fn(local_origin))
+        .layer(CorsLayer::new().allow_origin(["http://127.0.0.1:5173".parse::<axum::http::HeaderValue>().unwrap(),"http://localhost:5173".parse().unwrap()]).allow_methods([axum::http::Method::GET,axum::http::Method::POST]).allow_headers([axum::http::header::CONTENT_TYPE]))
         .with_state(state)
 }
 
@@ -38,13 +39,22 @@ async fn instruments(State(state): State<AppState>) -> Json<crate::catalog::Cata
     Json(crate::catalog::get(state.config.bybit_testnet).await)
 }
 
+async fn local_origin(request:axum::extract::Request,next:axum::middleware::Next)->axum::response::Response {
+ if let Some(origin)=request.headers().get(axum::http::header::ORIGIN){
+  if !matches!(origin.to_str(),Ok("http://127.0.0.1:5173"|"http://localhost:5173"|"http://127.0.0.1:8787"|"http://localhost:8787")){return StatusCode::FORBIDDEN.into_response();}
+ }
+ next.run(request).await
+}
+
 async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
     let snapshot = state.snapshot();
-    let jev_responded = state.inner.read().jev_responded;
+    let jev=crate::jev::status();
+    let scanner=crate::scanner::snapshot();
+    let calibration=crate::model::calibration_status();
     let model_status = if let Some(ref model) = state.inner.read().model {
         format!("deployed ({})", model.model.model_version)
     } else {
-        "paper scoring".to_string()
+        format!("{} ({}/{})",calibration["state"].as_str().unwrap_or("unavailable"),calibration["samples"].as_u64().unwrap_or(0),calibration["required"].as_u64().unwrap_or(500))
     };
     Json(json!({
         "ok": snapshot.connected && !snapshot.feed_stale && snapshot.features.is_some(),
@@ -53,10 +63,13 @@ async fn health(State(state): State<AppState>) -> Json<serde_json::Value> {
             "market_feed": if snapshot.connected && !snapshot.feed_stale {"live"} else {"unavailable"},
             "signal_engine": if snapshot.analyses.len()==4 && !snapshot.feed_stale {"evaluating"} else {"warming / halted"},
             "history": if snapshot.analyses.len()==4 {"ready"} else {"loading"},
-            "jev": if jev_responded {"active"} else if std::env::var("TYPESAFE_API_KEY").is_ok_and(|v| !v.trim().is_empty()) {"configured"} else {"not configured"},
+            "jev": jev.status,
+            "scanner": scanner.status,
+            "paper_account": state.paper.lock().view().monitoring,
             "execution": "paper only",
             "calibrated_model": model_status
         },
+        "agent": {"jev":jev,"calibration":calibration,"scanner": {"status":scanner.status,"scanned":scanner.scanned,"total":scanner.rows.len(),"current_symbol":scanner.scanning_symbol,"completed_ms":scanner.completed_ms,"error":scanner.error}},
         "symbol": snapshot.symbol,
         "updated_at_ms": snapshot.updated_at_ms
     }))
@@ -145,9 +158,7 @@ async fn ws_loop(mut socket: WebSocket, state: AppState) {
     }
 }
 
-fn demo_result(win:bool)->Result<Json<crate::demo::Demo>,(StatusCode,Json<serde_json::Value>)>{
- crate::demo::run(win).map(Json).map_err(|_|(StatusCode::INTERNAL_SERVER_ERROR,Json(json!({"error":"Demo simulation failed"}))))
-}
+
 
 #[derive(serde::Deserialize)]struct PaperEntry {signal_id:String,notional:f64}
 #[derive(serde::Deserialize)]struct PaperClose {position_id:String}

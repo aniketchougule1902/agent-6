@@ -1,119 +1,146 @@
-use crate::{state::AppState, types::EngineEvent};
+use crate::{
+    state::{now_ms, AppState},
+    types::{EngineEvent, SignalStatus},
+};
+use serde::Serialize;
 use serde_json::{json, Value};
-use std::{env, time::Duration};
-use tokio::time;
-use tracing::warn;
-
-/// Optional, asynchronous setup review. This is research evidence, never an
-/// execution gate or a calibrated probability of a profitable trade.
+use std::{collections::HashSet, sync::OnceLock, time::Duration};
+#[derive(Clone, Serialize, Default)]
+pub struct Health {
+    pub status: String,
+    pub last_attempt_ms: u64,
+    pub last_success_ms: u64,
+    pub requests: u64,
+    pub last_review: String,
+    pub error: Option<String>,
+}
+static HEALTH: OnceLock<parking_lot::RwLock<Health>> = OnceLock::new();
+fn health() -> &'static parking_lot::RwLock<Health> {
+    HEALTH.get_or_init(|| {
+        parking_lot::RwLock::new(Health {
+            status: "starting".into(),
+            ..Health::default()
+        })
+    })
+}
+pub fn status() -> Health {
+    let mut h = health().read().clone();
+    if h.last_success_ms > 0
+        && now_ms().saturating_sub(h.last_success_ms) > 600_000
+        && h.status == "online"
+    {
+        h.status = "idle; awaiting fresh review".into();
+    }
+    h
+}
 pub async fn run(state: AppState) {
-    let Ok(api_key) = env::var("TYPESAFE_API_KEY") else {
-        return;
-    };
-    if api_key.trim().is_empty() {
+    let key = std::env::var("TYPESAFE_API_KEY").unwrap_or_default();
+    if key.trim().is_empty() {
+        health().write().status = "not configured".into();
         return;
     }
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(8))
+        .timeout(Duration::from_secs(12))
         .build()
     {
-        Ok(client) => client,
-        Err(error) => {
-            warn!(?error, "Jev client unavailable");
+        Ok(c) => c,
+        Err(_) => {
+            health().write().status = "client unavailable".into();
             return;
         }
     };
-    let mut last_id = String::new();
-    let mut ticker = time::interval(Duration::from_secs(2));
+    let mut seen = HashSet::new();
+    let mut next_context = 0;
     loop {
-        ticker.tick().await;
-        let snapshot = state.snapshot();
-        let (Some(signal), Some(features)) = (snapshot.active_signal, snapshot.features) else {
-            continue;
-        };
-        if signal.id == last_id || snapshot.feed_stale {
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        let snap = state.snapshot();
+        if !snap.connected || snap.feed_stale {
             continue;
         }
-        last_id = signal.id.clone();
-
-        let payload = json!({
-            "model": "jev-latest",
-            "state": {
-                "side": signal.side,
-                "timeframe_minutes": signal.timeframe,
-                "quality_score_uncalibrated": signal.confidence,
-                "regime": features.regime,
-                "trend_5m_bps": features.trend_5m_bps,
-                "trend_15m_bps": features.trend_15m_bps,
-                "momentum_1m_bps": features.momentum_1m_bps,
-                "spread_bps": features.spread_bps,
-                "book_imbalance": features.book_imbalance,
-                "trade_flow_imbalance": features.trade_flow_imbalance,
-                "liquidation_pressure": features.liquidation_pressure
-            },
-            "questions": {
-                "confluence": {
-                    "type": "choice",
-                    "instructions": "Do the listed observations qualitatively support the proposed direction at this instant? Classify only the internal consistency of the observations. Do not predict profit or treat the quality score as evidence.",
-                    "criteria": {
-                        "aligned": "Trend, short momentum and flow broadly support the proposed side.",
-                        "mixed": "The observations conflict or are too weak to judge.",
-                        "contradictory": "Several observations oppose the proposed side."
-                    }
-                }
+        let Some(f) = snap.features else { continue };
+        let signal = snap
+            .timeframe_signals
+            .iter()
+            .find(|s| {
+                matches!(s.status, SignalStatus::Active | SignalStatus::Tp1Hit)
+                    && !seen.contains(&s.id)
+            })
+            .cloned();
+        if signal.is_none() && now_ms() < next_context {
+            continue;
+        }
+        let input = json!({"symbol":snap.symbol,"setup":signal.as_ref().map(|s|json!({"side":s.side,"timeframe":s.timeframe,"reasons":s.reasons})),"regime":f.regime,"trend5_bps":f.trend_5m_bps,"trend15_bps":f.trend_15m_bps,"flow":f.trade_flow_imbalance,"book":f.book_imbalance_top5,"spread_bps":f.spread_bps});
+        let payload = json!({"model":"jev-latest","state":input,"questions":{"confluence":{"type":"choice","instructions":"Classify internal directional consistency. If a setup is supplied assess its side against trend and flow; otherwise assess whether trend and flow agree. Do not predict profit or authorize orders.","criteria":{"aligned":"Trends and flow support a consistent direction and the supplied setup side if any.","mixed":"Weak or conflicting observations.","contradictory":"Several observations oppose the supplied setup direction."}}}});
+        {
+            let mut h = health().write();
+            h.last_attempt_ms = now_ms();
+            h.requests += 1;
+            h.status = "reviewing".into();
+        }
+        let result = async {
+            let r = client
+                .post("https://api.typesafe.ai/v1/systemone")
+                .bearer_auth(&key)
+                .json(&payload)
+                .send()
+                .await
+                .map_err(|_| "Network error contacting Jev".to_string())?;
+            if !r.status().is_success() {
+                return Err(format!("Jev HTTP {}", r.status().as_u16()));
             }
-        });
-        let answer = client
-            .post("https://api.typesafe.ai/v1/systemone")
-            .bearer_auth(&api_key)
-            .json(&payload)
-            .send()
-            .await;
-        let review = match answer {
-            Ok(response) if response.status().is_success() => {
-                match response.json::<Value>().await {
-                    Ok(value) => value,
-                    Err(error) => {
-                        warn!(?error, "Jev response could not be parsed");
-                        continue;
-                    }
+            let v = r
+                .json::<Value>()
+                .await
+                .map_err(|_| "Invalid Jev JSON".to_string())?;
+            let choice = v
+                .pointer("/answers/confluence/choice")
+                .and_then(Value::as_str)
+                .filter(|c| ["aligned", "mixed", "contradictory"].contains(c))
+                .ok_or("Invalid Jev choice")?;
+            Ok::<String, String>(choice.into())
+        }
+        .await;
+        next_context = now_ms() + 300_000;
+        match result {
+            Ok(choice) => {
+                let message = format!(
+                    "{} {}: {choice}; qualitative review, not a win probability",
+                    snap.symbol,
+                    signal
+                        .as_ref()
+                        .map(|s| format!("{}m", s.timeframe))
+                        .unwrap_or_else(|| "market context".into())
+                );
+                {
+                    let mut h = health().write();
+                    h.status = "online".into();
+                    h.last_success_ms = now_ms();
+                    h.last_review = message.clone();
+                    h.error = None;
                 }
-            }
-            Ok(response) => {
-                warn!(status = %response.status(), "Jev review unavailable");
-                continue;
+                if let Some(s) = &signal {
+                    seen.insert(s.id.clone());
+                }
+                if seen.len() > 1000 {
+                    seen.clear();
+                }
+                state.publish(EngineEvent {
+                    ts_ms: now_ms(),
+                    event_type: "jev_review".into(),
+                    alert: None,
+                    message,
+                    signal,
+                });
             }
             Err(error) => {
-                warn!(?error, "Jev review unavailable");
-                continue;
+                {
+                    let mut h = health().write();
+                    h.status = "unavailable".into();
+                    h.error = Some(error);
+                }
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                next_context = 0;
             }
-        };
-        let Some(choice) = review
-            .pointer("/answers/confluence/choice")
-            .and_then(Value::as_str)
-        else {
-            continue;
-        };
-        if !["aligned", "mixed", "contradictory"].contains(&choice) {
-            continue;
         }
-        let confidence = review
-            .pointer("/answers/confluence/confidence")
-            .and_then(Value::as_f64)
-            .filter(|value| value.is_finite() && (0.0..=1.0).contains(value));
-        // Do not attach a review to a newer market or altered setup.
-        let current = state.snapshot();
-        if current.symbol != signal.symbol
-            || current.active_signal.as_ref().map(|s| &s.id) != Some(&signal.id)
-        {
-            continue;
-        }
-        state.publish(EngineEvent {
-            ts_ms: crate::state::now_ms(),
-            event_type: "jev_review".into(),
-            alert: None,
-            message: format!("Jev confluence review: {choice} (model certainty: {}); research-only, not a win probability", confidence.map(|c| format!("{:.0}%", c * 100.0)).unwrap_or_else(|| "unknown".into())),
-            signal: Some(signal),
-        });
     }
 }

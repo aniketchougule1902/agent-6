@@ -122,12 +122,24 @@ impl ModelEvaluator {
         Ok(Self { manifest, model })
     }
 
+    pub fn deployment_allowed(&self)->bool {
+        let m=&self.model.metrics;
+        self.manifest.feature_schema_version=="a6.live.signals.v2" && self.manifest.training_data_id.starts_with("live-journal:")
+        && self.manifest.code_revision=="a6-live-v2"
+        && crate::state::now_ms().saturating_sub(self.manifest.created_at_ms)<30*86400_000
+        && m.get("independent_test_samples").is_some_and(|v|*v>=100.0)
+        && m.get("ece").is_some_and(|v|v.is_finite()&&*v>=0.0&&*v<=0.08)
+        && m.get("brier").zip(m.get("baseline_brier")).is_some_and(|(b,base)|b.is_finite()&&*b>=0.0&&b<base)
+        && self.model.features.len()==1 && self.model.features[0].name=="quality_score"
+        && [self.model.intercept,self.model.calibration.a,self.model.calibration.b,self.model.features[0].weight].iter().all(|v|v.is_finite())
+    }
     pub fn predict(&self, f: &FeatureSnapshot, a: &TimeframeAnalysis) -> ModelPrediction {
         let price = f.last_price.max(1e-9);
         let mut linear_score = self.model.intercept;
 
         for feat in &self.model.features {
             let val = match feat.name.as_str() {
+                "quality_score" => a.quality,
                 "adx14" => a.adx14,
                 "rsi14" => a.rsi14,
                 "atr_bps" => (a.atr14 / price) * 10_000.0,
@@ -344,4 +356,20 @@ mod tests {
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("integrity check failed"));
     }
+}
+
+pub fn calibration_status()->serde_json::Value {
+    std::fs::read("data/calibration-status.json").ok().and_then(|b|serde_json::from_slice(&b).ok()).unwrap_or_else(||serde_json::json!({"state":"starting","reason":"Calibration worker not yet completed"}))
+}
+pub async fn watch(state:crate::state::AppState){
+ loop {
+  let python=std::env::var("A6_PYTHON").unwrap_or_else(|_|"python".into());
+  let result=tokio::time::timeout(std::time::Duration::from_secs(120),tokio::process::Command::new(python).arg("scripts/calibrate_signals.py").env("A6_MODEL_PATH",&state.config.model_path).env("A6_JOURNAL_PATH",&state.config.journal_path).kill_on_drop(true).output()).await;
+  if !matches!(result,Ok(Ok(ref out)) if out.status.success()){
+   tracing::warn!("Calibration worker unavailable; inspect Python setup");
+   let _=std::fs::write("data/calibration-status.json",serde_json::json!({"state":"unavailable","reason":"Calibration job failed. Check Python and research dependencies.","updated_ms":crate::state::now_ms()}).to_string());
+  }
+  state.inner.write().model=ModelEvaluator::load_from_file(&state.config.model_path).ok().filter(|m|m.deployment_allowed());
+  tokio::time::sleep(std::time::Duration::from_secs(300)).await;
+ }
 }

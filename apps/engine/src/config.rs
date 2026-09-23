@@ -40,7 +40,7 @@ impl Config {
                 .into(),
             round_trip_cost_bps: parse("A6_ROUND_TRIP_COST_BPS", 12.0),
             model_path: env::var("A6_MODEL_PATH")
-                .unwrap_or_else(|_| "models/champion_model.json".into())
+                .unwrap_or_else(|_| "data/calibrated_model.json".into())
                 .into(),
         })
     }

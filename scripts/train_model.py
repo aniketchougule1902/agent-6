@@ -83,38 +83,6 @@ def fetch_bybit_klines(symbol: str, interval: str = "1", limit: int = 1000) -> l
     return []
 
 
-def generate_synthetic_candles(num_bars: int = 1000, seed: int = 42) -> list[dict]:
-    """Generate high-fidelity synthetic market candles for offline / testing environments."""
-    rng = np.random.default_rng(seed)
-    now_ms = int(time.time() * 1000) - (num_bars * 60_000)
-    price = 65000.0
-    candles = []
-
-    for i in range(num_bars):
-        vol = rng.uniform(0.0005, 0.0025)
-        # Add slight trending & regime shifts
-        regime = np.sin(i / 100.0) * 0.0004
-        ret = rng.normal(regime, vol)
-        open_p = price
-        close_p = price * (1.0 + ret)
-        high_p = max(open_p, close_p) * (1.0 + abs(rng.normal(0.0, vol * 0.7)))
-        low_p = min(open_p, close_p) * (1.0 - abs(rng.normal(0.0, vol * 0.7)))
-        volume = rng.lognormal(mean=3.5, sigma=0.8)
-
-        candles.append({
-            "start_ms": now_ms + (i * 60_000),
-            "open": open_p,
-            "high": high_p,
-            "low": low_p,
-            "close": close_p,
-            "volume": volume,
-            "turnover": volume * close_p,
-        })
-        price = close_p
-
-    return candles
-
-
 def ema_series(values: np.ndarray, period: int) -> np.ndarray:
     out = np.zeros_like(values)
     if len(values) < period:
@@ -448,11 +416,10 @@ def main():
     parser.add_argument("--symbol", default="BTCUSDT", help="Trading symbol (default: BTCUSDT)")
     parser.add_argument("--interval", default="1", help="Kline interval in minutes (default: 1)")
     parser.add_argument("--limit", type=int, default=1000, help="Number of klines to fetch (default: 1000)")
-    parser.add_argument("--offline", action="store_true", help="Force synthetic offline data")
     parser.add_argument(
         "--output",
         type=Path,
-        default=REPO_ROOT / "models" / "champion_model.json",
+        default=REPO_ROOT / "models" / "research_candidate.json",
         help="Output model JSON path",
     )
     args = parser.parse_args()
@@ -460,16 +427,11 @@ def main():
     print(f"=== Agent-6 ML Model Training & Setup ===")
     print(f"Target symbol: {args.symbol} (interval: {args.interval}m)")
 
-    candles = []
     data_source = "bybit_rest"
-    if not args.offline:
-        print(f"Fetching {args.limit} candles from Bybit Linear REST API...")
-        candles = fetch_bybit_klines(args.symbol, interval=args.interval, limit=args.limit)
-
+    candles = fetch_bybit_klines(args.symbol, interval=args.interval, limit=args.limit)
     if not candles:
-        print("Note: Using synthetic market generator (offline mode / fallback)...")
-        candles = generate_synthetic_candles(num_bars=args.limit)
-        data_source = "synthetic_replay"
+        raise RuntimeError("No real market candles available; refusing synthetic fallback")
+    print("RESEARCH ONLY: this candle-proxy model cannot pass the live deployment gate.")
 
     print(f"Loaded {len(candles)} candles. Computing multi-factor features and meta-labels...")
     x, y, meta = compute_features_and_labels(candles)

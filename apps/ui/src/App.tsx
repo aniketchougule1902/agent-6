@@ -22,6 +22,7 @@ import type { TradeSignal } from "./generated/TradeSignal";
 import type { RuntimeMarketUpdate } from "./generated/RuntimeMarketUpdate";
 import { overlayData } from "./chartIndicators";
 import { CoinIcon, ServiceBar, SymbolSearch, useCatalog, price } from "./MarketTools";
+import { MarketSidebar } from "./MarketSidebar";
 import { RiskPlanner } from "./RiskPlanner";
 import { PaperTrading } from "./PaperTrading";
 import { drawSetup } from "./drawSetup";
@@ -321,7 +322,7 @@ function SignalCard({ signal, stale, chartTimeframe }: { signal: TradeSignal | n
         </div>
         <div className="confidence">
           <strong>{(signal.confidence * 100).toFixed(1)}%</strong>
-          <span>{signal.calibrated ? "calibrated probability" : "quality score"}</span>
+          <span>{signal.calibrated ? "TP2 outcome probability" : "quality score"}</span>
         </div>
       </div>
       {chartTimeframe&&<p className="setup-context">Viewing {signal.timeframe}m setup on the {chartTimeframe}m chart. Entry recorded at {new Date(signal.created_at_ms).toLocaleTimeString()}; this is not a fresh entry recommendation.</p>}
@@ -451,7 +452,6 @@ function LiveApp() {
           <div className="subtitle">LOCAL CRYPTO SCALPING INTELLIGENCE</div>
         </div>
         <div className="header-actions">
-          <a className="button" href="/?demo=win">Paper demo</a>
           <div className={`status ${healthy ? "online" : "offline"}`}>
             <span />
             {statusText}
@@ -462,6 +462,7 @@ function LiveApp() {
         </div>
       </header>
 
+      <div className="workspace"><MarketSidebar busy={marketUpdating} onSelect={symbol=>void updateMarket({symbol,timeframe:"5"})}/><div className="workspace-main">
       <section className="ticker-row">
         <div className="ticker-control">
           <SymbolSearch instruments={instruments} error={catalogError} busy={marketUpdating} symbol={snapshot.symbol} onSelect={symbol=>void updateMarket({symbol,timeframe:null})}/>
@@ -581,39 +582,10 @@ function LiveApp() {
           )}
         </div>
       </section>
+      </div></div>
     </main>
   );
 }
 
 
-type DemoFill = {fill_price:number;filled_quantity:number;fee_quote:number;total_latency_ms:number};
-type DemoReport = {disclosure:string;snapshot:EngineSnapshot;events:EngineEvent[];entry_fill:DemoFill;exit_fills:DemoFill[];gross_pnl:number;fees:number;net_pnl:number;quantity:number};
-function DemoApp() {
-  const [report,setReport]=useState<DemoReport|null>(null);
-  const [error,setError]=useState<string|null>(null);
-  const [scenario,setScenario]=useState('win');
-  const [frame,setFrame]=useState(0);
-  const alarms=useAudioAlarms();
-  const player=useRef(alarms.play);player.current=alarms.play;
-  const lastAlert=useRef(-1);
-  useEffect(()=>{const controller=new AbortController();setReport(null);setError(null);setFrame(0);lastAlert.current=-1;
-    fetch(`/api/demo/${scenario}`,{signal:controller.signal}).then(r=>{if(!r.ok)throw Error('Demo engine unavailable');return r.json();}).then(setReport).catch(e=>{if(!controller.signal.aborted)setError(String(e));});return()=>controller.abort();
-  },[scenario]);
-  useEffect(()=>{if(!report)return;const timer=setInterval(()=>setFrame(f=>Math.min(4,f+1)),1800);return()=>clearInterval(timer);},[report]);
-  useEffect(()=>{if(!report||frame===lastAlert.current)return;const created=report.events[0].ts_ms;for(const event of report.events){if(event.alert&&event.ts_ms===created+frame*60000)player.current(event.alert);}lastAlert.current=frame;},[frame,report]);
-  if(error)return <main className="loading"><h1>Demo unavailable</h1><p>{error}</p><a href="/">Live dashboard</a></main>;
-  if(!report)return <main className="loading"><h1>Preparing isolated paper demo...</h1></main>;
-  const cutoff=report.events[0].ts_ms+frame*60000;
-  const events=report.events.filter(e=>e.ts_ms<=cutoff);
-  const candles=report.snapshot.candles_1m.filter(c=>c.start_ms<=cutoff);
-  const snapshot:EngineSnapshot={...report.snapshot,candles_1m:candles,last_price:candles.at(-1)?.close??null,active_signal:events.at(-1)?.signal??null,chart_flags:report.snapshot.chart_flags.filter(f=>f.ts_ms<=cutoff)};
-  const done=frame===4;
-  return <main className="app-shell demo-shell">
-    <div className="demo-banner"><strong>SCRIPTED PAPER DEMO | SYNTHETIC PRICES</strong><span>{report.disclosure}</span></div>
-    <header><div><div className="brand">AGENT-6 / DEMO</div><div className="subtitle">PRODUCTION TP/SL LIFECYCLE + FILL SIMULATOR</div></div><div className="header-actions"><a className="button" href="/">Live dashboard</a><button className="button" onClick={async()=>{await alarms.enable();lastAlert.current=-1;setFrame(0);}}>Replay with sound</button><button className="button" onClick={()=>setScenario(s=>s==='win'?'loss':'win')}>Show scripted {scenario==='win'?'loss':'win'}</button></div></header>
-    <section className="demo-summary panel"><Metric label="REFERENCE ENTRY" value="100.00"/><Metric label="STOP" value="99.00"/><Metric label="TP1 / HALF EXIT" value="101.40"/><Metric label="TP2 / FINAL EXIT" value="102.50"/><Metric label="QUANTITY" value="10 units"/><Metric label="NET AFTER COSTS" value={done?`${report.net_pnl>=0?'+':''}${report.net_pnl.toFixed(4)} USDT`:'Demo running...'}/></section>
-    <div className="main-grid"><section className="panel chart-panel"><Chart snapshot={snapshot} timeframe="1" tickSize="0.01"/></section><div className="right-column"><SignalCard signal={snapshot.active_signal} stale={false}/><section className="panel"><div className="eyebrow">{done?'SIMULATION COMPLETE':'PLAYING SYNTHETIC PRICE PATH'}</div><p>{done?(report.net_pnl>0?'Scripted winning scenario completed.':'Scripted losing scenario completed.'):`Step ${frame+1} of 5`}</p><p className="muted">The setup and price path are chosen in advance. This verifies software behavior and does not measure signal accuracy.</p>{done&&<><Metric label="GROSS AFTER SIMULATED SLIPPAGE" value={report.gross_pnl.toFixed(4)}/><Metric label="SIMULATED FEES" value={report.fees.toFixed(4)}/><Metric label="ENTRY FILL" value={report.entry_fill.fill_price.toFixed(5)}/>{report.exit_fills.map((f,i)=><Metric key={i} label={`EXIT ${i+1} / ${f.filled_quantity} UNITS`} value={f.fill_price.toFixed(5)}/>)}</>}</section></div></div>
-    <section className="panel event-panel"><div className="eyebrow">ISOLATED DEMO EVENTS | NOT SAVED AS LIVE RESULTS</div>{events.map(e=><div className="event" key={e.event_type}><time>{new Date(e.ts_ms).toLocaleTimeString()}</time><strong>{e.event_type.toUpperCase()}</strong><span>{e.message}</span></div>)}</section>
-  </main>;
-}
-export default function App(){return new URLSearchParams(window.location.search).has('demo')?<DemoApp/>:<LiveApp/>;}
+export default function App(){return <LiveApp/>;}
