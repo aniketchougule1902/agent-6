@@ -113,7 +113,7 @@ mod tests {
 
     #[test]
     fn normalizes_kline_with_exact_candle_bounds() {
-        let events = normalize_message(r#"{\"topic\":\"kline.1.BTCUSDT\",\"ts\":1700000060000,\"data\":[{\"start\":1700000000000,\"end\":1700000059999,\"timestamp\":1700000050000,\"interval\":\"1\",\"open\":\"100\",\"high\":\"102\",\"low\":\"99\",\"close\":\"101\",\"volume\":\"12\",\"turnover\":\"1212\",\"confirm\":true}]}"#);
+        let events = normalize_message(r#"{"topic":"kline.1.BTCUSDT","ts":1700000060000,"data":[{"start":1700000000000,"end":1700000059999,"timestamp":1700000050000,"interval":"1","open":"100","high":"102","low":"99","close":"101","volume":"12","turnover":"1212","confirm":true}]}"#);
         assert_eq!(events.len(), 1);
         let NormalizedMarketEvent::Kline { ts_ms, start_ms, end_ms, interval, confirmed, .. } = &events[0] else { panic!("wrong event") };
         assert_eq!((*ts_ms, *start_ms, *end_ms, interval.as_str(), *confirmed), (1_700_000_050_000, 1_700_000_000_000, 1_700_000_059_999, "1", true));
