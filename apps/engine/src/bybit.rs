@@ -93,13 +93,7 @@ pub async fn run_forever(state: AppState) {
     let mut market_changes = runtime::subscribe();
     let mut loaded_symbol = String::new();
     let mut backfill_task: Option<tokio::task::JoinHandle<()>> = None;
-    let mut recorder = match AcceptedMarketRecorder::open(&state.config.market_record_path) {
-        Ok(recorder) => recorder,
-        Err(error) => {
-            warn!(?error, "market recorder unavailable; live feed halted");
-            return;
-        }
-    };
+    let mut recorder: Option<AcceptedMarketRecorder> = None;
 
     loop {
         let market = market_changes.borrow().clone();
@@ -107,6 +101,22 @@ pub async fn run_forever(state: AppState) {
         if loaded_symbol != market.symbol {
             if let Some(task) = backfill_task.take() {
                 task.abort();
+            }
+            // Drop the old writer before rotating the active session file. Each
+            // symbol/process session remains independently replayable.
+            recorder.take();
+            let session_label = format!("{}-g{}", market.symbol, market.generation);
+            match AcceptedMarketRecorder::start_session(&state.config.market_record_path, &session_label) {
+                Ok((next_recorder, archived)) => {
+                    if let Some(path) = archived {
+                        info!(path = %path.display(), "archived previous normalized market recording");
+                    }
+                    recorder = Some(next_recorder);
+                }
+                Err(error) => {
+                    warn!(?error, "market recorder unavailable; live feed halted");
+                    return;
+                }
             }
             state.inner.write().reset_market();
             let backfill_state = state.clone();
@@ -125,8 +135,12 @@ pub async fn run_forever(state: AppState) {
             loaded_symbol = market.symbol.clone();
         }
 
+        let Some(recorder) = recorder.as_mut() else {
+            warn!("market recorder session missing; live feed halted");
+            return;
+        };
         recorder.reset_symbol(&market.symbol);
-        match run_session(&state, &market, &mut market_changes, &mut recorder).await {
+        match run_session(&state, &market, &mut market_changes, recorder).await {
             Ok(SessionEnd::Reconfigure) => {
                 let next = market_changes.borrow().clone();
                 state.inner.write().reset_market();
