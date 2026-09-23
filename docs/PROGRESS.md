@@ -70,15 +70,15 @@
 - Unit tests cover threshold behavior, peak-relative drawdown, latch behavior and malformed inputs. The module is compiled into the engine but is not yet wired into signal admission, so the roadmap risk-circuit-breaker item remains intentionally incomplete.
 - Code commits: `3842cdd1853c537ffe81a7b10423d40915148047`, `89bb4e0df7515f3f04fc8f5608088786aee73aa9`.
 
-## 2026-09-23 — CI repair checkpoint
+## 2026-09-23 — CI risk-test repair
 
-- Actions run `35821339700` failed in the Rust test step after the risk-circuit-breaker foundation landed; all later CI stages were skipped.
-- Reworked the threshold assertions to avoid brittle floating-point equality at decimal boundaries while preserving the production `>=` halt semantics, and formatted the affected test literals.
-- Repair commit: `b8fa9b70017e1d31a59d00f7ef068b18e6489211`. Validation is pending the new main workflow run; this checkpoint is not claimed green until Actions passes.
+- Actions run `35825522282` failed in `cargo test --workspace`: `trips_daily_loss_past_threshold_and_latches` expected no halt at equity 951, but the shared 3% drawdown limit correctly halted first at a 4.9% drawdown. This was a test-isolation error, not a production breaker error.
+- Corrected the daily-loss regression to use a deliberately looser 10% drawdown limit while retaining the production priority and `>=` halt semantics. This cleanly tests the 5% session-loss path without another valid breaker masking it.
+- Repair commit: `c161c03da52636237ed14df6b5dd3210c8fc78c5`. CI validation is pending and is not claimed green until the new main run passes.
 
 ### Current highest-priority gaps
 
-1. Restore CI green and confirm the risk circuit-breaker tests pass on GitHub Actions.
+1. Restore CI green and confirm the corrected risk circuit-breaker tests pass on GitHub Actions.
 2. Invoke `append_bybit_message` from the production accepted websocket path; rejected stale/non-monotonic L50 payloads must remain zero-write before live state mutation.
 3. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
 4. Add Parquet/DuckDB typed persistence.
