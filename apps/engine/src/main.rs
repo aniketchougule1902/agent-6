@@ -14,6 +14,7 @@ mod market_event;
 mod microstructure;
 mod outcomes;
 mod replay;
+mod replay_pipeline;
 mod risk;
 mod runtime;
 mod signal;
