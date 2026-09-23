@@ -112,9 +112,7 @@ impl AcceptedMarketRecorder {
         for event in events {
             candidate_gate.accept(event)?;
         }
-        for event in events {
-            self.recorder.append(event)?;
-        }
+        self.recorder.append_batch(events)?;
         self.gate = candidate_gate;
         Ok(events.len())
     }
