@@ -1,5 +1,17 @@
 # Progress Log
 
+## 2026-09-24 — Typed live/replay boundary, analytical store, and persistent signal lifecycle
+
+- Repaired the latest-main research CI regression without restoring synthetic fallback to production training. Synthetic candles now live only in tests; `scripts/train_model.py` remains real-data-only and fail-closed when exchange history is unavailable. Actions `35911636439` and `35911643981` passed.
+- Extended normalized kline events with exact exchange candle `start_ms`/`end_ms`. Strict replay rejects legacy/malformed klines whose bounds are unavailable, preventing false reconstruction. The regression fixture repair passed Actions `35912144100`.
+- Added a shared typed market-event applier and changed production WebSocket ingestion to normalize once, validate before disk I/O, atomically record the batch, then mutate live state from those exact same `NormalizedMarketEvent` values. The duplicate raw-JSON state mutator was removed. Actions `35912377603` and `35912506211` passed.
+- Signal IDs are deterministic from symbol/timeframe/closed-candle/side evidence rather than random UUIDs, making replay identity and lifecycle auditing stable. Actions `35912472871` passed.
+- Added typed offline analytical persistence: validated normalized JSONL -> Zstd Parquet + DuckDB via `python scripts/build_event_store.py --overwrite`. Round-trip tests preserve L50 zero-size deletion levels and exact kline bounds, and reject non-monotonic books or legacy klines. Actions `35912661637`, `35912689190`, and `35912702556` passed.
+- Added explicit `reversed` and `invalidated` signal lifecycle states, bounded recent signal history, distinct audible alarms, and UI history. A fully admitted opposite setup explicitly archives/reverses the previous setup before the new one is admitted; same-side candidates do not silently replace an active setup. Symbol changes explicitly invalidate open setups and retain them in history.
+- Full startup-equivalent feature/signal replay is **not** marked complete yet: live startup still seeds indicators from REST backfill, and those bootstrap candles are not yet represented in the normalized WebSocket recording. That gap must be closed before claiming exact live-vs-replay parity.
+- Real-money autonomous execution remains disabled; lifecycle and paper observations do not imply exchange fills or guaranteed profitability.
+
+
 ## 2026-09-23 — Live admission and optional Jev review
 
 - Connected the normalized Bybit recorder to the production websocket path before market-state mutation. Integrity or disk-write failures end the session and reconnect; the L50 book is cleared at each session start.
@@ -90,12 +102,12 @@
 
 ### Current highest-priority gaps
 
-1. Restore CI green and confirm the corrected risk circuit-breaker tests pass on GitHub Actions.
-2. Invoke `append_bybit_message` from the production accepted websocket path; rejected stale/non-monotonic L50 payloads must remain zero-write before live state mutation.
-3. Feed strict deterministic replay through the exact production Rust market-state → feature → signal path.
-4. Add Parquet/DuckDB typed persistence.
-5. Drive the execution simulator from replay for end-to-end outcome evaluation.
-6. Wire the session loss/drawdown circuit breaker into signal admission, then add the remaining risk halts.
+1. Keep current-main CI green; partial lifecycle commits intentionally exposed strict TypeScript exhaustiveness until the new alert mappings were added.
+2. Capture/version REST bootstrap candles (or an equivalent immutable bootstrap snapshot) so deterministic replay starts from the same historical state as live operation.
+3. Drive the exact production Rust feature + signal evaluation loop from deterministic replay after bootstrap parity is available.
+4. Drive the execution simulator from replay for end-to-end after-cost outcome evaluation.
+5. Wire the session loss/drawdown circuit breaker into signal admission, then add exposure, volatility, stale-model and corrupted-data halts.
+6. Continue controlled champion/challenger registry + rollback and the time-aware local evidence/RAG layer.
 
 Real-money autonomous execution remains absent/disabled.
 
