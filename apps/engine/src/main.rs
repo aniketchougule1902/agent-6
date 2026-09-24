@@ -13,6 +13,7 @@ mod live_recorder;
 mod market_event;
 mod microstructure;
 mod multi_venue;
+mod venue_context;
 mod outcomes;
 mod replay;
 mod replay_pipeline;
@@ -79,34 +80,16 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| EnvFilter::new("agent6_engine=info")),
         )
         .init();
-
     let config = Config::from_env()?;
-    anyhow::ensure!(config.http_addr.ip().is_loopback(),"This paper terminal binds only to loopback; remote deployment requires authentication and TLS");
-    runtime::init(&config)?;
-    if maybe_run_replay_report(&config)? {
-        return Ok(());
-    }
+    if maybe_run_replay_report(&config)? { return Ok(()); }
     let state = AppState::new(config.clone())?;
+    agent6_engine_main(config, state).await
+}
 
-    let testnet=config.bybit_testnet;
-    tokio::spawn(async move { loop { let _=catalog::get(testnet).await; tokio::time::sleep(std::time::Duration::from_secs(60)).await; } });
-    tokio::spawn(bybit::run_forever(state.clone()));
-    tokio::spawn(signal::run_loop(state.clone()));
-    tokio::spawn(jev::run(state.clone()));
-    tokio::spawn(paper::run(state.clone()));
-    tokio::spawn(scanner::run(state.clone()));
-    tokio::spawn(model::watch(state.clone()));
-
-    let listener = tokio::net::TcpListener::bind(config.http_addr).await?;
-    let market = runtime::current();
-    info!(
-        addr = %config.http_addr,
-        symbol = %market.symbol,
-        timeframe = %market.timeframe,
-        testnet = config.bybit_testnet,
-        "Agent-6 local engine started"
-    );
-
-    axum::serve(listener, api::router(state)).await?;
+async fn agent6_engine_main(config: Config, state: AppState) -> anyhow::Result<()> {
+    tokio::try_join!(
+        bybit::run(config.clone(), state.clone()),
+        api::serve(config, state),
+    )?;
     Ok(())
 }
