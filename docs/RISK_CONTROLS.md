@@ -20,8 +20,10 @@ Open exposure is measured from each position's immutable entry price times remai
 
 `RiskStateSnapshot` is versioned and validates the session start, observed peak, latest equity, limits, timestamp, and latched halt reason. A latched breaker never clears merely because equity recovers.
 
-The snapshot format is ready, but crash-safe transactional persistence of the intratrade peak/latch alongside the paper ledger is still incomplete. Until that wiring is finished, startup reconstruction from closed-equity history cannot recover a drawdown that breached and fully recovered before a crash without leaving a closed-equity trace. Do not treat this limitation as solved.
+A new `RiskStateStore` provides an atomic, fsync-backed sidecar format bound to the paper account revision. It validates the nested risk snapshot and fails closed on corrupt JSON, unknown schema versions, unsafe/unlatched breached snapshots, or a paper/risk revision mismatch. Successful replacement also fsyncs the containing directory where supported. Tests cover durable latch round-trip, revision mismatch, corruption/schema rejection and replacement cleanup.
+
+This is deliberately not yet marked as transactional paper-ledger integration. The store is compiled and validated, but the paper mutation path still needs to persist the account and risk snapshot as one recoverable transaction (or with a journal/commit marker) before entry admission can rely on the sidecar after every crash boundary. Until that wiring is finished, startup reconstruction from closed-equity history cannot recover a drawdown that breached and fully recovered before a crash without leaving a closed-equity trace.
 
 ## Alerts and next work
 
-Existing signal/TP/SL/feed alarms remain unchanged. A dedicated risk-halt alarm/UI state should be emitted when the durable breaker persistence is wired, without blocking monitoring or exits for positions that were already open.
+Existing signal/TP/SL/feed alarms remain unchanged. The next checkpoint is to wire the revision-bound store into paper mutations/recovery with an explicit crash protocol, then emit a dedicated risk-halt alarm/UI state without blocking monitoring or exits for positions that were already open.
