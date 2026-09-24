@@ -12,6 +12,7 @@ mod flags;
 mod live_recorder;
 mod market_event;
 mod microstructure;
+mod multi_venue;
 mod outcomes;
 mod replay;
 mod replay_pipeline;
