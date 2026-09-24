@@ -544,7 +544,7 @@ function LiveApp() {
         <div className="command-card"><span>ACTIVE THESIS</span><strong className={displayedSetup?.side === "long" ? "positive" : displayedSetup?.side === "short" ? "negative" : ""}>{displayedSetup ? `${displayedSetup.timeframe}m ${displayedSetup.side.toUpperCase()}` : "NO SETUP"}</strong><small>{displayedSetup ? displayedSetup.status.replaceAll("_"," ").toUpperCase() : "Waiting for admission"}</small></div>
         <div className={`command-card gate-${guidance.state}`}><span>EXECUTION GATE</span><strong>{guidance.state.toUpperCase()}</strong><small>{guidance.title}</small></div>
         <div className="command-card"><span>REGIME</span><strong>{f?.regime.replaceAll("_"," ").toUpperCase() ?? "WARMING"}</strong><small>{f ? `Spread ${f.spread_bps.toFixed(2)} bp · Book ${f.orderbook_age_ms} ms` : "Collecting live features"}</small></div>
-        <div className="command-card"><span>PAPER EQUITY</span><strong className={snapshot.paper_equity >= 1000 ? "positive" : "negative"}>${moneyUi(snapshot.paper_equity)}</strong><small>{snapshot.paper_open_count} open · {snapshot.paper_closed_count} closed</small></div>
+        <div className="command-card"><span>PAPER EQUITY</span><strong className={snapshot.paper_equity >= 1000 ? "positive" : "negative"}>{moneyUi(snapshot.paper_equity)}</strong><small>{snapshot.paper_open_count} open · {snapshot.paper_closed_count} closed</small></div>
       </section>
       <section className="timeframe-board" aria-label="All scalping timeframes">
         {(["1", "3", "5", "15"] as Timeframe[]).map(tf => {
