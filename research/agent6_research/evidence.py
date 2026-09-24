@@ -11,6 +11,7 @@ import math
 import re
 import sqlite3
 from pathlib import Path
+from time import perf_counter_ns
 from typing import Iterable
 
 _TOKEN = re.compile(r"[a-z0-9_]{2,}")
@@ -62,6 +63,15 @@ class EvidenceHit:
     schema_version: str | None
     evidence_kind: str
     validated_label: bool
+
+
+@dataclass(frozen=True)
+class RetrievalBenchmark:
+    queries: int
+    hits_at_k: int
+    recall_at_k: float
+    mean_latency_ms: float
+    max_latency_ms: float
 
 
 class EvidenceIndex:
@@ -130,8 +140,8 @@ class EvidenceIndex:
     def retrieve(self, query: str, *, as_of_ms: int, limit: int = 8,
                  symbol: str | None = None, timeframe: str | None = None,
                  include_inference: bool = False) -> list[EvidenceHit]:
-        if as_of_ms < 0 or limit <= 0:
-            raise ValueError("as_of_ms must be non-negative and limit positive")
+        if as_of_ms < 0 or limit <= 0 or limit > 100:
+            raise ValueError("as_of_ms must be non-negative and limit in [1, 100]")
         qtokens = set(_tokens(query))
         if not qtokens:
             return []
@@ -160,6 +170,28 @@ class EvidenceIndex:
                                     row[7], row[8], row[9], row[10], row[11], bool(row[12])))
         hits.sort(key=lambda h: (-h.score, -h.event_ts_ms, h.evidence_id))
         return hits[:limit]
+
+    def benchmark(self, cases: Iterable[tuple[str, int, str]], *, limit: int = 8) -> RetrievalBenchmark:
+        """Measure retrieval latency/usefulness on caller-defined causal cases.
+
+        Each case is ``(query, as_of_ms, expected_evidence_id)``. The benchmark never changes the
+        index and never relaxes point-in-time filtering. It is intended to gate experiments before
+        evidence retrieval is considered for any latency-sensitive path.
+        """
+        cases = list(cases)
+        if not cases:
+            raise ValueError("at least one benchmark case is required")
+        latencies: list[float] = []
+        found = 0
+        for query, as_of_ms, expected_id in cases:
+            start = perf_counter_ns()
+            hits = self.retrieve(query, as_of_ms=as_of_ms, limit=limit)
+            latencies.append((perf_counter_ns() - start) / 1_000_000.0)
+            found += int(any(hit.evidence_id == expected_id for hit in hits))
+        return RetrievalBenchmark(
+            queries=len(cases), hits_at_k=found, recall_at_k=found / len(cases),
+            mean_latency_ms=sum(latencies) / len(latencies), max_latency_ms=max(latencies),
+        )
 
 
 def _tokens(text: str) -> Iterable[str]:
