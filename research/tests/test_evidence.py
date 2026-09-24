@@ -64,6 +64,23 @@ def test_inference_is_separated_from_factual_retrieval(tmp_path):
     idx.close()
 
 
+def test_benchmark_measures_causal_recall_and_latency_without_future_leakage(tmp_path):
+    idx = EvidenceIndex(tmp_path / "evidence.sqlite")
+    past = idx.ingest(doc("BTC liquidation burst with widening spread", 1_000, 1_000))
+    future = idx.ingest(doc("BTC liquidation burst future reversal", 5_000, 5_000,
+                            uri="recording://future"))
+    report = idx.benchmark([
+        ("liquidation widening spread", 2_000, past),
+        ("future reversal", 2_000, future),
+    ], limit=4)
+    assert report.queries == 2
+    assert report.hits_at_k == 1
+    assert report.recall_at_k == 0.5
+    assert report.mean_latency_ms >= 0.0
+    assert report.max_latency_ms >= report.mean_latency_ms
+    idx.close()
+
+
 def test_rejects_untrusted_sources_impossible_time_and_recursive_labels(tmp_path):
     idx = EvidenceIndex(tmp_path / "evidence.sqlite")
     invalid = [
@@ -80,7 +97,7 @@ def test_rejects_untrusted_sources_impossible_time_and_recursive_labels(tmp_path
     idx.close()
 
 
-def test_rejects_invalid_metadata(tmp_path):
+def test_rejects_invalid_metadata_and_unbounded_limit(tmp_path):
     idx = EvidenceIndex(tmp_path / "evidence.sqlite")
     bad = EvidenceDocument("", "x", 0, 0, "content")
     try:
@@ -88,8 +105,14 @@ def test_rejects_invalid_metadata(tmp_path):
         assert False, "expected validation failure"
     except ValueError:
         pass
+    for kwargs in ({"as_of_ms": -1}, {"as_of_ms": 1, "limit": 101}):
+        try:
+            idx.retrieve("x", **kwargs)
+            assert False, "expected validation failure"
+        except ValueError:
+            pass
     try:
-        idx.retrieve("x", as_of_ms=-1)
+        idx.benchmark([])
         assert False, "expected validation failure"
     except ValueError:
         pass
