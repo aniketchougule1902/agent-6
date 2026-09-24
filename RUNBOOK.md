@@ -2,6 +2,8 @@
 
 Single-user local paper trading. No real-money orders. This is not a certified unattended production trading platform.
 
+The dashboard now opens in Beginner mode with one next-step card. Advanced view reveals market radar and detailed analysis. New paper entries require a setup no older than 60 seconds and a current price inside its entry zone; the server enforces these checks too. A silent dashboard halts entry after five seconds. Enable alarms after opening the page. See [production readiness](docs/PRODUCTION_READINESS.md) for the audit and prioritized next work.
+
 ## One-command start (PowerShell)
 
 Prerequisites: Rust stable, Node.js 22.12+ or 24+, Python 3.12+.
@@ -54,7 +56,9 @@ Set TYPESAFE_API_KEY in `.env` and restart for Jev. Green online means a recent 
 
 ## Market radar
 
-Sidebar monitors the top 20 active USDT crypto perpetuals by 24h quote turnover; stock, ETF, commodity and forex contracts are excluded. It scans 5m setups with 15m confirmation, ranks technical quality and shows forming/candidate/watch phases. Provisional watch/SL/TP levels require full live order-flow confirmation on the selected market before paper entry. These rankings are not validated probabilities. Scans refresh about once per minute; rows older than 180 seconds are marked stale.
+Radar scans up to 200 active USDT crypto perpetuals selected by 24h quote turnover; stock, ETF, commodity and forex contracts are excluded. Four market scans run concurrently, each checking 5m setups with 15m confirmation. After a cycle, the scanner waits 45 seconds before starting again. Duration depends on exchange latency and errors.
+
+The list shows only fresh candidates with no scan blockers and raw setup quality from 90% through 100%, sorted by descending quality. No volume-ranking tab remains. The top-200 universe uses turnover, not global market capitalization. Setup quality is a heuristic score, not a calibrated win probability. Empty results mean no qualifying setups; scores are never inflated to populate the list. Rows older than 180 seconds are excluded, with age measured from the ticker snapshot used for price/spread checks. Selecting a coin opens full live order-flow confirmation; radar candidates do not submit orders.
 
 The chart supports 1m/3m/5m/15m. Only the selected market receives the full live order-book/trade-flow signal pipeline. Existing paper positions have independent quote monitoring.
 

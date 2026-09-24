@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "test": "node --test src/*.test.mjs",
     "predev": "cd ../.. && cargo test -p agent6-engine --quiet",
     "dev": "vite",
     "prebuild": "cd ../.. && cargo test -p agent6-engine --quiet",

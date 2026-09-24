@@ -1,4 +1,4 @@
-> Current operation: see [runbook.md](RUNBOOK.md) for the one-command launcher and current limits. The demo has been removed. The local paper account starts at $1,000. Market Radar ranks the top 20 USDT crypto perpetual markets by technical setup quality; rankings are not win probabilities. Legacy calibration artifacts are blocked until independent live-outcome validation passes. Historical checkpoints below describe earlier versions.
+> Current operation: see [runbook.md](RUNBOOK.md) for the one-command launcher and current limits. The demo has been removed. The local paper account starts at $1,000. Market Radar scans the top 200 USDT crypto perpetual markets by turnover and lists fresh 90-100% setup-quality candidates in descending score order; rankings are not win probabilities. Legacy calibration artifacts are blocked until independent live-outcome validation passes. Historical checkpoints below describe earlier versions.
 
 ## Start the current app
 
@@ -15,7 +15,7 @@ Open http://127.0.0.1:5173. The launcher builds the release engine and UI, prese
 
 - Persistent $1,000 paper account: manual signal entry, optional browser-session auto-entry, partial TP1, TP2/SL/expiry/manual exits, reset confirmation and archived account history. Signal IDs are deterministic from entry evidence; confirmed opposite setups explicitly mark the prior setup `reversed`, and recent terminal/invalidation history remains visible.
 - Balance, equity, available/reserved funds, fees, realized/unrealized P&L, fills, win rate, profit factor and closed-equity drawdown. Paper positions survive restarts and market changes; fresh quote polling monitors them independently.
-- Background radar scans the 20 highest-volume USDT crypto perpetuals, including eligible meme coins, using 5m formations and 15m confirmation. Ranked and volume views show provisional levels, blockers and observation age. Selecting a row opens that market for full live flow confirmation.
+- Background radar scans the 200 highest-turnover USDT crypto perpetuals, including eligible meme coins, using 5m formations and 15m confirmation. The radar lists only fresh, unblocked 90-100% quality candidates, sorted by score, with provisional levels and observation age. Selecting a row opens that market for full live flow confirmation.
 - Agent activity exposes scan progress, Jev's latest actual response/error and calibration progress. Jev is online only after a successful typed response.
 - Live calibration collects versioned, observed outcomes and runs every five minutes. At least 500 outcomes and independent validation gates are required before deployment. Until then quality scores remain heuristic; 90% accuracy is not established.
 - Single-user local paper terminal. No real-money execution. Remote production hosting still requires authentication, TLS, durable multi-user storage and operational testing. Quote polling can miss price crossings between observations.

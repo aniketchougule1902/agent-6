@@ -38,6 +38,10 @@ jobs:
         working-directory: apps/ui
         run: npm run build
 
+      - name: Test entry guidance safety
+        working-directory: apps/ui
+        run: npm test
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:

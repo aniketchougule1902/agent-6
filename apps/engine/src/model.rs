@@ -124,12 +124,18 @@ impl ModelEvaluator {
 
     pub fn deployment_allowed(&self)->bool {
         let m=&self.model.metrics;
-        self.manifest.feature_schema_version=="a6.live.signals.v2" && self.manifest.training_data_id.starts_with("live-journal:")
+        self.manifest.schema_version == 1
+        && self.manifest.created_at_ms <= crate::state::now_ms()
+        && self.model.calibration.method == "platt"
+        && self.model.abstention.threshold.is_finite()
+        && self.model.abstention.threshold > 0.0 && self.model.abstention.threshold < 1.0
+        && self.model.features.iter().all(|f| f.mean.is_finite() && f.scale.is_finite() && f.scale > 0.0)
+        && self.manifest.feature_schema_version=="a6.live.signals.v2" && self.manifest.training_data_id.starts_with("live-journal:")
         && self.manifest.code_revision=="a6-live-v2"
         && crate::state::now_ms().saturating_sub(self.manifest.created_at_ms)<30*86400_000
-        && m.get("independent_test_samples").is_some_and(|v|*v>=100.0)
+        && m.get("independent_test_samples").is_some_and(|v|v.is_finite()&&*v>=100.0)
         && m.get("ece").is_some_and(|v|v.is_finite()&&*v>=0.0&&*v<=0.08)
-        && m.get("brier").zip(m.get("baseline_brier")).is_some_and(|(b,base)|b.is_finite()&&*b>=0.0&&b<base)
+        && m.get("brier").zip(m.get("baseline_brier")).is_some_and(|(b,base)|b.is_finite()&&base.is_finite()&&*base<=1.0&&*b>=0.0&&b<base)
         && self.model.features.len()==1 && self.model.features[0].name=="quality_score"
         && [self.model.intercept,self.model.calibration.a,self.model.calibration.b,self.model.features[0].weight].iter().all(|v|v.is_finite())
     }
@@ -309,6 +315,28 @@ pub fn sha256_hex(data: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn deployment_rejects_invalid_configuration_even_with_good_metrics() {
+        let mut m = ModelEvaluator {
+            manifest: ModelManifest { schema_version: 1, model_family: "platt_live_signal_outcome".into(), feature_schema_version: "a6.live.signals.v2".into(), training_data_id: "live-journal:test".into(), code_revision: "a6-live-v2".into(), created_at_ms: crate::state::now_ms(), artifact_sha256: String::new(), metrics: HashMap::new() },
+            model: ModelPayload { model_version: "test".into(), intercept: 0.0, features: vec![FeatureConfig { name: "quality_score".into(), mean: 0.0, scale: 1.0, weight: 1.0 }], calibration: CalibrationConfig { method: "platt".into(), a: 1.0, b: 0.0 }, abstention: AbstentionConfig { threshold: 0.5, min_coverage: 0.0, validation_utility: 0.0 }, metrics: HashMap::from([("independent_test_samples".into(), 120.0), ("ece".into(), 0.04), ("brier".into(), 0.15), ("baseline_brier".into(), 0.25)]) }
+        };
+        assert!(m.deployment_allowed());
+        for threshold in [f64::NAN, -1.0, 0.0, 1.0, f64::INFINITY] {
+            m.model.abstention.threshold = threshold;
+            assert!(!m.deployment_allowed());
+        }
+        m.model.abstention.threshold = 0.5;
+        m.model.features[0].scale = 0.0;
+        assert!(!m.deployment_allowed());
+        m.model.features[0].scale = 1.0;
+        m.manifest.created_at_ms += 86400_000;
+        assert!(!m.deployment_allowed());
+        m.manifest.created_at_ms = crate::state::now_ms();
+        m.model.metrics.insert("baseline_brier".into(), f64::INFINITY);
+        assert!(!m.deployment_allowed());
+    }
 
     #[test]
     fn test_sha256_known_vectors() {

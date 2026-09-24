@@ -2,7 +2,9 @@ use crate::{
     state::{now_ms, AppState},
     types::{Candle, TimeframeAnalysis},
 };
+use futures_util::{stream, StreamExt};
 use serde::Serialize;
+const UNIVERSE_SIZE: usize = 200;
 use serde_json::Value;
 use std::{collections::VecDeque, sync::OnceLock, time::Duration};
 #[derive(Clone, Serialize)]
@@ -161,7 +163,7 @@ pub async fn run(state: AppState) {
                                 .unwrap_or(0.0)
                         };
                         let last = num("lastPrice");
-                        if last <= 0.0 {
+                        if !last.is_finite() || last <= 0.0 || !num("turnover24h").is_finite() || num("turnover24h") <= 0.0 {
                             continue;
                         }
                         rows.push((
@@ -188,7 +190,7 @@ pub async fn run(state: AppState) {
                     }
                 }
                 rows.sort_by(|a, b| b.0.turnover24h.total_cmp(&a.0.turnover24h));
-                rows.truncate(20);
+                rows.truncate(UNIVERSE_SIZE);
                 {
                     let mut s = store().write();
                     let old = s.rows.clone();
@@ -207,11 +209,14 @@ pub async fn run(state: AppState) {
                         })
                         .collect();
                 }
-                for (mut row, bid, ask) in rows {
-                    store().write().scanning_symbol = row.symbol.clone();
+                let quote_observed_ms = store().read().cycle_started_ms;
+                let mut completed = stream::iter(rows.into_iter().map(|(mut row, bid, ask)| {
+                    let client = &client;
+                    let config = &state.config;
+                    async move {
                     let (a, b) = tokio::join!(
-                        analysis(&client, state.config.bybit_testnet, &row.symbol, "5"),
-                        analysis(&client, state.config.bybit_testnet, &row.symbol, "15")
+                        analysis(client, config.bybit_testnet, &row.symbol, "5"),
+                        analysis(client, config.bybit_testnet, &row.symbol, "15")
                     );
                     match (a, b) {
                         (Ok(a), Ok(b)) => {
@@ -222,24 +227,24 @@ pub async fn run(state: AppState) {
                             if a.bias != b.bias || a.bias == "neutral" {
                                 row.blockers.push("15m trend does not confirm".into());
                             }
-                            if bid <= 0.0
+                            if !bid.is_finite() || !ask.is_finite() || bid <= 0.0
                                 || ask < bid
-                                || (ask - bid) / row.price * 10000.0 > state.config.max_spread_bps
+                                || (ask - bid) / row.price * 10000.0 > config.max_spread_bps
                             {
                                 row.blockers.push("Spread/liquidity check failed".into());
                             }
                             if (row.price - a.close).abs() > a.atr14 * 0.75 {
                                 row.blockers.push("Price moved beyond entry window".into());
                             }
-                            if row.quality < state.config.min_signal_score {
+                            if row.quality < config.min_signal_score {
                                 row.blockers.push("Quality below threshold".into());
                             }
                             if row.side != "neutral" {
                                 let d = if row.side == "long" { 1.0 } else { -1.0 };
                                 let risk = a.atr14 * 1.5;
-                                let cost = row.price * state.config.round_trip_cost_bps / 10000.0;
+                                let cost = row.price * config.round_trip_cost_bps / 10000.0;
                                 if risk > 0.0
-                                    && (risk * 2.5 - cost) / (risk + cost) >= state.config.min_rr
+                                    && (risk * 2.5 - cost) / (risk + cost) >= config.min_rr
                                 {
                                     row.entry = Some(row.price);
                                     row.stop = Some(row.price - d * risk);
@@ -264,7 +269,14 @@ pub async fn run(state: AppState) {
                                 .push("History request failed; no actionable candidate".into());
                         }
                     }
-                    row.checked_ms = now_ms();
+                    // Price/spread evidence comes from the cycle's ticker snapshot.
+                    // Never stamp old quotes as fresh when a slow history request completes.
+                    row.checked_ms = quote_observed_ms;
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                    row
+                    }
+                })).buffer_unordered(4);
+                while let Some(mut row) = completed.next().await {
                     {
                         let mut s = store().write();
                         if let Some(old) = s.rows.iter_mut().find(|r| r.symbol == row.symbol) {
@@ -279,8 +291,8 @@ pub async fn run(state: AppState) {
                             *old = row;
                         }
                         s.scanned += 1;
+                        s.scanning_symbol = format!("{} of {} checked", s.scanned, s.rows.len());
                     }
-                    tokio::time::sleep(Duration::from_millis(250)).await;
                 }
                 {
                     let mut s = store().write();

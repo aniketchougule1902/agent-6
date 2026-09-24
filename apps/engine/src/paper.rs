@@ -228,6 +228,14 @@ impl Paper {
             * 60_000;
         let expires = signal.created_at_ms + hold;
         ensure!(now < expires, "Signal expired");
+        ensure!(now >= signal.created_at_ms && now - signal.created_at_ms <= 60_000,
+            "Entry window closed; wait for a fresh setup (60 seconds maximum)");
+        ensure!([signal.entry_low, signal.entry_high, signal.stop_loss, signal.tp1, signal.tp2]
+            .iter().all(|v| v.is_finite() && *v > 0.0)
+            && signal.entry_low <= signal.entry_high, "Invalid setup levels");
+        let midpoint = (bid + ask) / 2.0;
+        ensure!(midpoint >= signal.entry_low && midpoint <= signal.entry_high,
+            "Price is outside the entry zone; do not chase");
         let d = direction(&signal.side);
         let entry = if d > 0.0 {
             ask * (1.0 + SLIP)
@@ -238,6 +246,7 @@ impl Paper {
             d * (entry - signal.stop_loss) > 0.0 && d * (signal.tp1 - entry) > 0.0,
             "Market has passed the signal stop or first target; entry rejected"
         );
+        ensure!(d * (signal.tp2 - signal.tp1) > 0.0, "Invalid target ordering");
         let quantity = notional / entry;
         let fee = notional * FEE;
         ensure!(
@@ -537,6 +546,25 @@ mod tests {
             std::env::temp_dir().join(format!("a6-paper-test-{}.json", uuid::Uuid::new_v4())),
         )
         .unwrap()
+    }
+    #[test]
+    fn rejects_late_chased_future_and_invalid_entries_without_mutation() {
+        let mut p = account();
+        let now = now_ms();
+        for side in [Side::Long, Side::Short] {
+            let mut s = fixture(now, side);
+            assert!(p.enter(&s, 100.0, 99.99, 100.01, now + 60_001).is_err());
+            assert!(p.enter(&s, 100.0, 99.99, 100.01, now - 1).is_err());
+            assert!(p.enter(&s, 100.0, 100.99, 101.01, now).is_err());
+            s.tp2 = s.stop_loss;
+            assert!(p.enter(&s, 100.0, 99.99, 100.01, now).is_err());
+            s.entry_low = f64::NAN;
+            assert!(p.enter(&s, 100.0, 99.99, 100.01, now).is_err());
+        }
+        assert_eq!(p.account.balance, 1000.0);
+        assert!(p.account.positions.is_empty());
+        assert!(p.account.fills.is_empty());
+        std::fs::remove_file(p.path).unwrap();
     }
     #[test]
     fn account_roundtrip_partial_exit_and_reload() {

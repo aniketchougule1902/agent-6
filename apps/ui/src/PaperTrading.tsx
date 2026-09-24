@@ -24,6 +24,7 @@ interface PaperView {
 }
 
 const PAPER_API = "/api/paper";
+const money = (value: number) => (Math.abs(value) < 0.005 ? 0 : value).toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 
 function formatDuration(ms: number): string {
   const s = Math.floor(ms / 1000);
@@ -36,7 +37,7 @@ function pnlClass(v: number): string {
   return v > 0.005 ? "positive" : v < -0.005 ? "negative" : "";
 }
 
-export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; signal: TradeSignal | null }) {
+export function PaperTrading({ snapshot, signal, entryAllowed, advanced }: { snapshot: EngineSnapshot; signal: TradeSignal | null; entryAllowed: boolean; advanced: boolean }) {
   const [view, setView] = useState<PaperView | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -52,7 +53,8 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
   const refresh = useCallback(async () => {
     try {
       const r = await fetch(PAPER_API);
-      if (r.ok) { setView(await r.json()); }
+      if (!r.ok) throw new Error("Paper account unavailable");
+      setView(await r.json()); setError(null);
     } catch { setError("Paper account unavailable; displayed values may be stale"); }
   }, []);
 
@@ -97,7 +99,7 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
 
   // Auto-enter on new signal
   useEffect(() => {
-    if (!autoEnter || busy || !view || !signal || signal.status !== "active" || snapshot.feed_stale || !snapshot.connected) return;
+    if (!advanced || !entryAllowed || !autoEnter || busy || !view || !signal || signal.status !== "active" || snapshot.feed_stale || !snapshot.connected) return;
     if (signal.id === lastAutoSignal.current) return;
     // Check if already entered this signal
     if (view?.account.positions.some(p => p.signal_id === signal.id)) {
@@ -107,18 +109,18 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
     lastAutoSignal.current = signal.id;
     const amt = notional > 0 ? notional : 100;
     void enter(signal.id, amt);
-  }, [autoEnter, signal, enter, notional, view, busy, snapshot.feed_stale, snapshot.connected]);
+  }, [advanced, entryAllowed, autoEnter, signal, enter, notional, view, busy, snapshot.feed_stale, snapshot.connected]);
 
   const now = Date.now();
   const open = view?.account.positions.filter(p => p.remaining > 0) ?? [];
   const closed = view?.account.positions.filter(p => p.closed_ms != null).sort((a, b) => (b.closed_ms ?? 0) - (a.closed_ms ?? 0)) ?? [];
-  const canEnter = signal && signal.status === "active" && !view?.account.positions.some(p => p.signal_id === signal.id);
+  const canEnter = entryAllowed && view && !error && !view.error && signal && signal.status === "active" && !view?.account.positions.some(p => p.signal_id === signal.id);
 
   return <section className="panel paper-panel">
     <div className="paper-header">
       <div className="eyebrow">PAPER TRADING · $1,000 START</div>
       <div className="paper-actions">
-        <label className="auto-toggle" title="Automatically enter paper positions when new signals fire">
+        <label className="auto-toggle advanced-only" title="Automatically enter paper positions when new signals fire">
           <input type="checkbox" checked={autoEnter} onChange={e => setAutoEnter(e.target.checked)} />
           Auto-enter
         </label>
@@ -136,39 +138,39 @@ export function PaperTrading({ snapshot, signal }: { snapshot: EngineSnapshot; s
     <div className="paper-balance-bar">
       <div className="paper-stat">
         <span>Balance</span>
-        <strong>${price(snapshot.paper_balance)}</strong>
+        <strong>${money(snapshot.paper_balance)}</strong>
       </div>
       <div className="paper-stat">
         <span>Equity</span>
-        <strong className={pnlClass(snapshot.paper_equity - 1000)}>${price(snapshot.paper_equity)}</strong>
+        <strong className={pnlClass(snapshot.paper_equity - 1000)}>${money(snapshot.paper_equity)}</strong>
       </div>
       <div className="paper-stat">
         <span>Unrealized</span>
-        <strong className={pnlClass(snapshot.paper_unrealized)}>{snapshot.paper_unrealized >= 0 ? "+" : ""}{price(snapshot.paper_unrealized)}</strong>
+        <strong className={pnlClass(snapshot.paper_unrealized)}>{snapshot.paper_unrealized >= 0 ? "+" : ""}{money(snapshot.paper_unrealized)}</strong>
       </div>
       <div className="paper-stat">
         <span>Realized P&L</span>
-        <strong className={pnlClass(snapshot.paper_realized)}>{snapshot.paper_realized >= 0 ? "+" : ""}{price(snapshot.paper_realized)}</strong>
+        <strong className={pnlClass(snapshot.paper_realized)}>{snapshot.paper_realized >= 0 ? "+" : ""}{money(snapshot.paper_realized)}</strong>
       </div>
     </div>
 
     {/* Analytics */}
     <div className="paper-analytics">
       <span>Trades <b>{snapshot.paper_closed_count}</b></span>
-      <span>Win rate <b className={pnlClass((snapshot.paper_win_rate ?? 0) - 0.5)}>{snapshot.paper_win_rate != null ? `${(snapshot.paper_win_rate * 100).toFixed(1)}%` : "—"}</b></span>
+      <span>Observed win rate <b className={pnlClass((snapshot.paper_win_rate ?? 0) - 0.5)}>{snapshot.paper_win_rate != null ? `${(snapshot.paper_win_rate * 100).toFixed(1)}%` : "—"}</b></span>
       <span>Profit factor <b>{snapshot.paper_profit_factor != null ? snapshot.paper_profit_factor.toFixed(2) : "—"}</b></span>
-      <span>Closed DD <b className="negative">{snapshot.paper_max_drawdown > 0 ? `-${price(snapshot.paper_max_drawdown)}` : "—"}</b></span>
-      <span>Fees <b>{price(snapshot.paper_fees)}</b></span>
+      <span>Closed DD <b className="negative">{snapshot.paper_max_drawdown > 0 ? `-${money(snapshot.paper_max_drawdown)}` : "—"}</b></span>
+      <span>Fees <b>{money(snapshot.paper_fees)}</b></span>
       <span>Open <b>{snapshot.paper_open_count}</b></span>
     </div>
 
     {(error||view?.error)&&<div className="paper-error">{error||view?.error}</div>}
-    <p className="muted">Monitoring: {view?.monitoring??"connecting"} | Available ${price(view?.available??0)} | Reserved ${price(view?.reserved??0)}. Auto-entry only runs while this browser tab is open.</p>
+    <p className="muted">Monitoring: {view?.monitoring??"connecting"} | Available ${money(view?.available??0)} | Reserved ${money(view?.reserved??0)}. {advanced ? "Auto-entry only runs while this browser tab is open." : "Practice money only. Past results do not predict the next trade."}</p>
 
     {/* Enter signal button */}
     {canEnter && <div className="paper-enter-row">
       <button className="button paper-enter-btn" disabled={busy} onClick={() => void enter(signal.id, notional)}>
-        Enter {signal.side.toUpperCase()} · ${notional}
+        Practice {signal.side.toUpperCase()} · ${notional}
       </button>
       <label className="notional-input">
         Notional $
