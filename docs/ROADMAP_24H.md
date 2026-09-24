@@ -103,7 +103,7 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 - [x] time-to-event labels
 - [x] CatBoost challenger baseline
 - [x] purged chronological splits
-- [ ] Optuna research-only tuning
+- [x] Optuna research-only tuning
 - [x] model artifact manifest
 
 ## H14–H16 — Confidence and abstention
@@ -118,13 +118,15 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 ## H16–H18 — Self-evolution
 
 - [x] Promotion policy skeleton
-- [ ] strategy/model genome format
-- [ ] challenger generator
+- [x] strategy/model genome format
+- [x] challenger generator
 - [ ] automated replay evaluation
-- [ ] champion registry
+- [x] champion registry
 - [ ] signed/hashed artifacts
-- [ ] rollback path
+- [x] rollback path
 - [ ] critic post-trade diagnosis records
+
+The completed adaptive components are offline and fail-closed: genomes/challengers cannot self-promote, artifact hashes are revalidated before registry changes, promotion decisions remain auditable, and rollback is restricted to a previously accepted champion. Artifact signing and automated replay evaluation remain open.
 
 ## H18–H20 — Multi-venue context
 
