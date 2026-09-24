@@ -14,6 +14,61 @@ impl RiskLimits {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ExposureLimits {
+    pub max_total_fraction: f64,
+    pub max_symbol_fraction: f64,
+    pub max_open_positions: usize,
+}
+impl ExposureLimits {
+    pub fn validate(self) -> Result<Self> {
+        ensure!(self.max_total_fraction.is_finite() && self.max_total_fraction > 0.0 && self.max_total_fraction <= 1.0, "max_total_fraction must be finite and in (0, 1]");
+        ensure!(self.max_symbol_fraction.is_finite() && self.max_symbol_fraction > 0.0 && self.max_symbol_fraction <= self.max_total_fraction, "max_symbol_fraction must be finite, positive, and <= max_total_fraction");
+        ensure!(self.max_open_positions > 0, "max_open_positions must be positive");
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct OpenExposure<'a> {
+    pub symbol: &'a str,
+    pub notional: f64,
+}
+
+pub fn evaluate_new_exposure<'a>(
+    equity: f64,
+    requested_symbol: &str,
+    requested_notional: f64,
+    open: impl IntoIterator<Item = OpenExposure<'a>>,
+    limits: ExposureLimits,
+) -> Result<()> {
+    validate_equity(equity)?;
+    let limits = limits.validate()?;
+    ensure!(!requested_symbol.trim().is_empty(), "requested symbol is required");
+    ensure!(requested_notional.is_finite() && requested_notional > 0.0, "requested notional must be finite and positive");
+    let mut total = 0.0;
+    let mut symbol_total = 0.0;
+    let mut count = 0usize;
+    for exposure in open {
+        ensure!(!exposure.symbol.trim().is_empty(), "open exposure symbol is required");
+        ensure!(exposure.notional.is_finite() && exposure.notional >= 0.0, "open exposure notional must be finite and non-negative");
+        if exposure.notional == 0.0 { continue; }
+        count = count.checked_add(1).ok_or_else(|| anyhow::anyhow!("open position count overflow"))?;
+        total += exposure.notional;
+        ensure!(total.is_finite(), "total exposure overflow");
+        if exposure.symbol == requested_symbol {
+            symbol_total += exposure.notional;
+            ensure!(symbol_total.is_finite(), "symbol exposure overflow");
+        }
+    }
+    ensure!(count < limits.max_open_positions, "paper exposure halt: maximum open positions reached");
+    let next_total = total + requested_notional;
+    let next_symbol = symbol_total + requested_notional;
+    ensure!(next_total.is_finite() && next_total <= equity * limits.max_total_fraction + f64::EPSILON, "paper exposure halt: total exposure limit exceeded");
+    ensure!(next_symbol.is_finite() && next_symbol <= equity * limits.max_symbol_fraction + f64::EPSILON, "paper exposure halt: per-symbol exposure limit exceeded");
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RiskHaltReason { DailyLoss, Drawdown }
@@ -96,6 +151,10 @@ fn validate_equity(equity: f64) -> Result<()> { if !equity.is_finite() || equity
 mod tests {
     use super::*;
     fn limits() -> RiskLimits { RiskLimits { max_daily_loss_fraction: 0.05, max_drawdown_fraction: 0.03 } }
+    fn exposure_limits() -> ExposureLimits { ExposureLimits { max_total_fraction: 0.50, max_symbol_fraction: 0.25, max_open_positions: 3 } }
+    #[test] fn exposure_accepts_bounded_diversified_position() { evaluate_new_exposure(1000.0,"ETHUSDT",100.0,[OpenExposure{symbol:"BTCUSDT",notional:200.0}],exposure_limits()).unwrap(); }
+    #[test] fn exposure_rejects_total_symbol_and_count_limits() { assert!(evaluate_new_exposure(1000.0,"ETHUSDT",301.0,[OpenExposure{symbol:"BTCUSDT",notional:200.0}],exposure_limits()).is_err()); assert!(evaluate_new_exposure(1000.0,"BTCUSDT",60.0,[OpenExposure{symbol:"BTCUSDT",notional:200.0}],exposure_limits()).is_err()); assert!(evaluate_new_exposure(1000.0,"SOLUSDT",10.0,[OpenExposure{symbol:"BTCUSDT",notional:100.0},OpenExposure{symbol:"ETHUSDT",notional:100.0},OpenExposure{symbol:"XRPUSDT",notional:100.0}],exposure_limits()).is_err()); }
+    #[test] fn exposure_fails_closed_on_corrupt_inputs() { assert!(evaluate_new_exposure(f64::NAN,"BTCUSDT",10.0,[],exposure_limits()).is_err()); assert!(evaluate_new_exposure(1000.0,"",10.0,[],exposure_limits()).is_err()); assert!(evaluate_new_exposure(1000.0,"BTCUSDT",f64::INFINITY,[],exposure_limits()).is_err()); assert!(evaluate_new_exposure(1000.0,"BTCUSDT",10.0,[OpenExposure{symbol:"ETHUSDT",notional:f64::NAN}],exposure_limits()).is_err()); assert!(ExposureLimits{max_total_fraction:0.5,max_symbol_fraction:0.6,max_open_positions:1}.validate().is_err()); }
     #[test] fn trips_daily_loss_past_threshold_and_latches() { let mut g=SessionRiskCircuitBreaker::new(1000.0,RiskLimits{max_daily_loss_fraction:0.05,max_drawdown_fraction:0.10}).unwrap(); assert_eq!(g.observe_equity(951.0).unwrap(),None); assert_eq!(g.observe_equity(949.0).unwrap(),Some(RiskHaltReason::DailyLoss)); assert!(g.is_halted()); assert_eq!(g.observe_equity(1100.0).unwrap(),Some(RiskHaltReason::DailyLoss)); }
     #[test] fn trips_drawdown_from_peak_before_daily_loss() { let mut g=SessionRiskCircuitBreaker::new(1000.0,limits()).unwrap(); assert_eq!(g.observe_equity(1100.0).unwrap(),None); assert_eq!(g.observe_equity(1066.0).unwrap(),Some(RiskHaltReason::Drawdown)); }
     #[test] fn rebuilt_history_preserves_peak_and_latched_breach() { assert_eq!(evaluate_equity_history(1000.0,[1100.0,1066.0,1120.0],1150.0,limits()).unwrap(),Some(RiskHaltReason::Drawdown)); }
