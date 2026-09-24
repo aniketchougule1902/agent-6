@@ -25,8 +25,49 @@ mod types;
 mod model;
 
 use crate::{config::Config, state::AppState};
+use std::{env, fs, io::Write, path::Path};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+
+/// Offline-only evaluation mode. When A6_REPLAY_REPORT_OUTPUT is set, the
+/// engine reads the normalized production recording, drives the exact Rust
+/// replay -> signal lifecycle -> realistic simulator path, atomically writes a
+/// JSON report, and exits before any live websocket/paper tasks are started.
+fn maybe_run_replay_report(config: &Config) -> anyhow::Result<bool> {
+    let Ok(output) = env::var("A6_REPLAY_REPORT_OUTPUT") else { return Ok(false); };
+    anyhow::ensure!(!output.trim().is_empty(), "A6_REPLAY_REPORT_OUTPUT cannot be empty");
+    let input = env::var("A6_REPLAY_INPUT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| config.market_record_path.clone());
+    anyhow::ensure!(input.is_file(), "normalized replay input does not exist: {}", input.display());
+
+    let events = replay::read_recording(&input)?;
+    replay::validate_feed_integrity(&events)?;
+    anyhow::ensure!(!events.is_empty(), "normalized replay input is empty");
+    let market = runtime::current();
+    let report = replay_simulator::run_replay_simulation(
+        config,
+        &market,
+        events,
+        simulator::SimulationConfig::default(),
+    )?;
+
+    let output = Path::new(&output);
+    if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
+        fs::create_dir_all(parent)?;
+    }
+    let temp = output.with_extension("tmp");
+    {
+        let mut file = fs::File::create(&temp)?;
+        serde_json::to_writer_pretty(&mut file, &report)?;
+        file.write_all(b"\n")?;
+        file.sync_all()?;
+    }
+    fs::rename(&temp, output)?;
+    info!(input=%input.display(), output=%output.display(), round_trips=report.completed_round_trips,
+        net_pnl_quote=report.net_pnl_quote, "offline replay after-cost report written");
+    Ok(true)
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -40,6 +81,9 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::from_env()?;
     anyhow::ensure!(config.http_addr.ip().is_loopback(),"This paper terminal binds only to loopback; remote deployment requires authentication and TLS");
     runtime::init(&config)?;
+    if maybe_run_replay_report(&config)? {
+        return Ok(());
+    }
     let state = AppState::new(config.clone())?;
 
     let testnet=config.bybit_testnet;
