@@ -39,13 +39,45 @@ def test_summary_is_deterministic_cost_aware_and_hashed():
     assert first == second
     assert first.source_sha256 == second.source_sha256
     assert first.coverage == 0.5
+    assert first.unresolved_signal_events == 0
     assert first.win_rate_after_costs == pytest.approx(1 / 3)
     assert first.expectancy_quote == pytest.approx(1 / 3)
     assert first.profit_factor_after_costs == pytest.approx(2.0)
     assert first.max_drawdown_quote == pytest.approx(1.0)
     assert first.median_latency_ms == pytest.approx(30.0)
     assert first.p95_latency_ms == pytest.approx(39.0)
-    assert json.loads(first.to_json())["schema_version"] == "agent6-replay-evaluation-v1"
+    assert json.loads(first.to_json())["schema_version"] == "agent6-replay-evaluation-v2"
+
+
+def test_unresolved_signal_reduces_coverage_instead_of_disappearing():
+    report = fixture()
+    report["signal_events"] = 7
+    summary = evaluate_replay_report_bytes(raw(report))
+    assert summary.unresolved_signal_events == 1
+    assert summary.coverage == pytest.approx(3 / 7)
+
+
+def test_all_unresolved_signals_have_zero_coverage_without_inventing_metrics():
+    report = fixture()
+    report.update(
+        signal_events=2,
+        completed_round_trips=0,
+        skipped_no_book=0,
+        skipped_stale_book=0,
+        skipped_unfilled=0,
+        net_pnl_quote=0.0,
+        fees_quote=0.0,
+        wins_after_costs=0,
+        losses_after_costs=0,
+        flat_after_costs=0,
+        win_rate_after_costs=None,
+        expectancy_quote=None,
+        round_trips=[],
+    )
+    summary = evaluate_replay_report_bytes(raw(report))
+    assert summary.unresolved_signal_events == 2
+    assert summary.coverage == 0.0
+    assert summary.win_rate_after_costs is None
 
 
 @pytest.mark.parametrize("mutation", [
@@ -55,6 +87,7 @@ def test_summary_is_deterministic_cost_aware_and_hashed():
     lambda r: r.update(win_rate_after_costs=0.99),
     lambda r: r.update(expectancy_quote=99.0),
     lambda r: r["round_trips"].append(dict(r["round_trips"][0])),
+    lambda r: r.update(signal_events=5),
 ])
 def test_inconsistent_reports_fail_closed(mutation):
     report = fixture()
@@ -106,6 +139,7 @@ def test_empty_report_has_zero_coverage_without_inventing_metrics():
     )
     summary = evaluate_replay_report_bytes(raw(report))
     assert summary.coverage == 0.0
+    assert summary.unresolved_signal_events == 0
     assert summary.win_rate_after_costs is None
     assert summary.expectancy_quote is None
     assert summary.profit_factor_after_costs is None
