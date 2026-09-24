@@ -84,7 +84,7 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 - [x] stop gaps and partial fills
 - [x] queue/fill approximation
 - [x] deterministic seeded stress scenarios
-- [ ] Drive simulator from normalized production replay and emit after-cost outcome report
+- [x] Drive simulator from normalized production replay and emit after-cost outcome report
 
 ## H10–H12 — Research feature factory
 
@@ -120,13 +120,13 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 - [x] Promotion policy skeleton
 - [x] strategy/model genome format
 - [x] challenger generator
-- [ ] automated replay evaluation
+- [x] automated replay evaluation
 - [x] champion registry
-- [ ] signed/hashed artifacts
+- [x] content-hashed artifacts and hash-chained promotion audit
 - [x] rollback path
-- [ ] critic post-trade diagnosis records
+- [x] critic post-trade diagnosis records
 
-The completed adaptive components are offline and fail-closed: genomes/challengers cannot self-promote, artifact hashes are revalidated before registry changes, promotion decisions remain auditable, and rollback is restricted to a previously accepted champion. Artifact signing and automated replay evaluation remain open.
+The completed adaptive components are offline and fail-closed: genomes/challengers cannot self-promote, artifact hashes are revalidated before registry changes, promotion decisions are hash-chained and auditable, rollback is restricted to a previously accepted champion, and critic output cannot mutate weights. Cryptographic signing with an external/private signing key is not implemented and is not required by the local no-secret workflow.
 
 ## H18–H20 — Multi-venue context
 
