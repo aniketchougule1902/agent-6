@@ -30,6 +30,15 @@ pub enum RiskHaltReason {
     Drawdown,
 }
 
+impl std::fmt::Display for RiskHaltReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::DailyLoss => "session loss limit reached",
+            Self::Drawdown => "session drawdown limit reached",
+        })
+    }
+}
+
 /// Fail-closed session risk guard. Once tripped it is latched until an explicit
 /// session reset; subsequent equity recovery cannot silently re-enable signals.
 #[derive(Debug, Clone)]
@@ -77,6 +86,23 @@ impl SessionRiskCircuitBreaker {
     }
 }
 
+/// Rebuild the latched risk state from a deterministic chronological equity
+/// history and then evaluate the current paper equity. This makes admission
+/// restart-safe for persisted closed-equity observations instead of resetting
+/// the peak merely because the engine process restarted.
+pub fn evaluate_equity_history(
+    session_start_equity: f64,
+    historical_equities: impl IntoIterator<Item = f64>,
+    current_equity: f64,
+    limits: RiskLimits,
+) -> Result<Option<RiskHaltReason>> {
+    let mut guard = SessionRiskCircuitBreaker::new(session_start_equity, limits)?;
+    for equity in historical_equities {
+        guard.observe_equity(equity)?;
+    }
+    guard.observe_equity(current_equity)
+}
+
 fn validate_equity(equity: f64) -> Result<()> {
     if !equity.is_finite() || equity <= 0.0 {
         bail!("equity must be finite and positive");
@@ -97,47 +123,43 @@ mod tests {
 
     #[test]
     fn trips_daily_loss_past_threshold_and_latches() {
-        // Keep drawdown deliberately looser than daily loss in this test so the
-        // two independent halt reasons cannot mask one another.
         let daily_loss_limits = RiskLimits {
             max_daily_loss_fraction: 0.05,
             max_drawdown_fraction: 0.10,
         };
         let mut guard = SessionRiskCircuitBreaker::new(1000.0, daily_loss_limits).unwrap();
         assert_eq!(guard.observe_equity(951.0).unwrap(), None);
-        assert_eq!(
-            guard.observe_equity(949.0).unwrap(),
-            Some(RiskHaltReason::DailyLoss)
-        );
+        assert_eq!(guard.observe_equity(949.0).unwrap(), Some(RiskHaltReason::DailyLoss));
         assert!(guard.is_halted());
-        assert_eq!(
-            guard.observe_equity(1100.0).unwrap(),
-            Some(RiskHaltReason::DailyLoss)
-        );
+        assert_eq!(guard.observe_equity(1100.0).unwrap(), Some(RiskHaltReason::DailyLoss));
     }
 
     #[test]
     fn trips_drawdown_from_peak_before_daily_loss() {
         let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
         assert_eq!(guard.observe_equity(1100.0).unwrap(), None);
+        assert_eq!(guard.observe_equity(1066.0).unwrap(), Some(RiskHaltReason::Drawdown));
+    }
+
+    #[test]
+    fn rebuilt_history_preserves_peak_and_latched_breach() {
         assert_eq!(
-            guard.observe_equity(1066.0).unwrap(),
+            evaluate_equity_history(1000.0, [1100.0, 1066.0, 1120.0], 1150.0, limits()).unwrap(),
             Some(RiskHaltReason::Drawdown)
         );
+    }
+
+    #[test]
+    fn rebuilt_history_rejects_corrupt_observations() {
+        assert!(evaluate_equity_history(1000.0, [1010.0, f64::NAN], 1005.0, limits()).is_err());
+        assert!(evaluate_equity_history(1000.0, [1010.0], 0.0, limits()).is_err());
     }
 
     #[test]
     fn rejects_invalid_limits_and_equity() {
         assert!(SessionRiskCircuitBreaker::new(0.0, limits()).is_err());
         assert!(SessionRiskCircuitBreaker::new(f64::NAN, limits()).is_err());
-        assert!(SessionRiskCircuitBreaker::new(
-            1000.0,
-            RiskLimits {
-                max_daily_loss_fraction: 1.0,
-                max_drawdown_fraction: 0.03,
-            }
-        )
-        .is_err());
+        assert!(SessionRiskCircuitBreaker::new(1000.0, RiskLimits { max_daily_loss_fraction: 1.0, max_drawdown_fraction: 0.03 }).is_err());
         let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
         assert!(guard.observe_equity(f64::INFINITY).is_err());
     }
