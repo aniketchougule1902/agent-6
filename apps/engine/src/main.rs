@@ -21,6 +21,7 @@ mod replay_pipeline;
 mod replay_simulator;
 mod risk;
 mod risk_store;
+mod risk_transaction;
 mod runtime;
 mod signal;
 mod simulator;
