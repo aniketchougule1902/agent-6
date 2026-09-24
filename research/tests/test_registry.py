@@ -28,6 +28,7 @@ def test_registry_promotes_only_after_policy_and_preserves_rejection(tmp_path):
         candidate_report=report(0.01), champion_report=report(0.08), policy=PromotionPolicy(), at_ms=300)
     assert not rejected.accepted and rejected.action == "reject"
     assert registry.current_verified().manifest_sha256 == champion.manifest_sha256()
+    assert registry.current_verified().audit_head_sha256 == rejected.record_sha256()
     strong_path, strong = manifest(tmp_path, "strong", 310)
     promoted = registry.evaluate_and_promote(candidate_manifest=strong, candidate_path=strong_path,
         candidate_report=report(0.12), champion_report=report(0.08), policy=PromotionPolicy(), at_ms=400)
@@ -35,6 +36,8 @@ def test_registry_promotes_only_after_policy_and_preserves_rejection(tmp_path):
     assert registry.current_verified().manifest_sha256 == strong.manifest_sha256()
     rows = [json.loads(line) for line in registry.audit_path.read_text().splitlines()]
     assert [row["action"] for row in rows] == ["bootstrap", "reject", "promote"]
+    assert rows[0]["previous_record_sha256"] is None
+    assert rows[1]["previous_record_sha256"] == rejected.previous_record_sha256
 
 
 def test_registry_fails_closed_on_tamper_future_artifact_and_missing_bootstrap(tmp_path):
@@ -62,6 +65,7 @@ def test_rollback_is_explicit_hashed_and_audited(tmp_path):
     assert rollback.action == "rollback"
     assert rollback.reasons == ("shadow regression",)
     assert registry.current_verified().manifest_sha256 == old.manifest_sha256()
+    assert registry.current_verified().audit_head_sha256 == rollback.record_sha256()
     assert len(rollback.record_sha256()) == 64
     with pytest.raises(ValueError, match="reason"):
         registry.rollback(manifest=new, artifact_path=new_path, at_ms=400, reason="  ")
@@ -97,7 +101,35 @@ def test_audit_chain_and_decision_time_are_fail_closed(tmp_path):
     rows = [json.loads(line) for line in registry.audit_path.read_text().splitlines()]
     rows[-1]["prior_champion_manifest_sha256"] = "f" * 64
     registry.audit_path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
-    with pytest.raises(ValueError, match="chain is broken"):
+    with pytest.raises(ValueError, match="hash chain|chain is broken"):
+        registry.current_verified()
+
+
+def test_hash_chain_detects_historical_metric_and_reason_tampering(tmp_path):
+    registry = ChampionRegistry(tmp_path / "registry")
+    champion_path, champion = manifest(tmp_path, "champion", 100)
+    weak_path, weak = manifest(tmp_path, "weak", 210)
+    registry.bootstrap(champion, champion_path, 200)
+    registry.evaluate_and_promote(candidate_manifest=weak, candidate_path=weak_path,
+        candidate_report=report(0.01), champion_report=report(0.08), policy=PromotionPolicy(), at_ms=300)
+    rows = [json.loads(line) for line in registry.audit_path.read_text().splitlines()]
+    rows[0]["reasons"] = ["retroactively edited"]
+    registry.audit_path.write_text("\n".join(json.dumps(row, sort_keys=True, separators=(",", ":")) for row in rows) + "\n")
+    with pytest.raises(ValueError, match="hash chain"):
+        registry.current_verified()
+
+
+def test_pointer_authenticates_latest_rejected_decision(tmp_path):
+    registry = ChampionRegistry(tmp_path / "registry")
+    champion_path, champion = manifest(tmp_path, "champion", 100)
+    weak_path, weak = manifest(tmp_path, "weak", 210)
+    registry.bootstrap(champion, champion_path, 200)
+    registry.evaluate_and_promote(candidate_manifest=weak, candidate_path=weak_path,
+        candidate_report=report(0.01), champion_report=report(0.08), policy=PromotionPolicy(), at_ms=300)
+    rows = [json.loads(line) for line in registry.audit_path.read_text().splitlines()]
+    rows[-1]["reasons"] = ["tampered latest rejection"]
+    registry.audit_path.write_text("\n".join(json.dumps(row, sort_keys=True, separators=(",", ":")) for row in rows) + "\n")
+    with pytest.raises(ValueError, match="audit head"):
         registry.current_verified()
 
 
