@@ -1,5 +1,14 @@
 # Progress Log
 
+## 2026-09-24 — Multi-venue causal clock normalization
+
+- Starting head `d6e10e294f5efd3ee924f74129dbc435608414b7` was green in Actions run `35999979583` before this checkpoint.
+- Added a bounded, causal `VenueClockNormalizer` for secondary-venue research/context. It preserves raw exchange/receive timestamps, estimates receive-minus-exchange offset from a trailing median using only observations available at that instant, and emits explicit normalized time plus offset/sample-count provenance.
+- Clock samples fail closed on wrong-venue routing, backwards exchange time, excessive absolute skew, abrupt offset jumps, arithmetic overflow/underflow, or normalized-time reversal. Regression coverage proves future clock samples cannot alter an already-emitted normalized timestamp.
+- This remains outside the deterministic Bybit signal hot path. It is infrastructure for later lead/lag/divergence research, not evidence that Binance context improves trading performance.
+- No historical/OOS trading evaluation or challenger promotion was performed in this checkpoint; no performance metric is claimed.
+- Code commit: `d57419ebe068ca050279269b940d64a88e753d4c`. Fresh CI is pending at documentation time.
+
 ## 2026-09-24 — Typed live/replay boundary, analytical store, and persistent signal lifecycle
 
 - Repaired the latest-main research CI regression without restoring synthetic fallback to production training. Synthetic candles now live only in tests; `scripts/train_model.py` remains real-data-only and fail-closed when exchange history is unavailable. Actions `35911636439` and `35911643981` passed.
@@ -11,7 +20,6 @@
 - Full startup-equivalent feature/signal replay is **not** marked complete yet: live startup still seeds indicators from REST backfill, and those bootstrap candles are not yet represented in the normalized WebSocket recording. That gap must be closed before claiming exact live-vs-replay parity.
 - Real-money autonomous execution remains disabled; lifecycle and paper observations do not imply exchange fills or guaranteed profitability.
 
-
 ## 2026-09-23 — Live admission and optional Jev review
 
 - Connected the normalized Bybit recorder to the production websocket path before market-state mutation. Integrity or disk-write failures end the session and reconnect; the L50 book is cleared at each session start.
@@ -22,7 +30,6 @@
 - Local verification: 52 Rust tests passed; UI production build passed; live Bybit REST returned HTTP 200 and the running engine loaded 500 1m and 500 15m candles, connected its websocket, produced feature state, and wrote normalized market events. Jev was not exercised because `TYPESAFE_API_KEY` is absent. Python research tests await dependency installation on this machine.
 - Follow-up run: moved a locally supplied TypeSafe key out of the tracked example and into ignored `.env`; Jev review events were then observed in the journal. Added 15-second historical backfill retry and Bybit's documented `api.bytick.com` alternate REST host after `api.bybit.com` connection resets. Fixed chronological candle insertion when live data precedes backfill, which had caused Lightweight Charts to blank the UI. Added a regression test for the delayed-backfill case.
 - Live checkpoint: engine health `ok=true`, all four intervals have 500 candles, features are present, dashboard HTTP 200, browser screenshot shows chart and active setup, and a fresh browser session reports no page errors. The 24-hour hourly checker is running; its H00 Rust and UI checks passed, while research failed because Python dependencies are not installed.
-
 
 ## 2026-09-22 — Foundation and live vertical slice
 
@@ -55,7 +62,7 @@
 
 ## 2026-09-23 — Confidence, calibration and leakage controls
 
-- Added held-out Platt and isotonic calibration, Brier score, ECE, validation-derived `NO_TRADE` selection with minimum coverage, confidence-bucket diagnostics, and deterministic PSI/mean-confidence/abstention-rate drift monitoring.
+- Added held-out Platt and isotonic calibration, Brier score, ECE metrics, validation-derived `NO_TRADE` selection with minimum coverage, confidence-bucket diagnostics, and deterministic PSI/mean-confidence/abstention-rate drift monitoring.
 - Added outcome-horizon-aware purged chronological splitting; overlapping training labels are removed before validation and optional boundary embargo remains available.
 - Validation checkpoints: Actions `35772137230`, `35778894627`, `35785267026`, `35791057802` passed.
 
@@ -111,7 +118,6 @@
 
 Real-money autonomous execution remains absent/disabled.
 
-
 ## Advanced scalping dashboard update (2026-09-23)
 
 - Independent paper setups and target/stop alerts for all supported scalping intervals: 1m, 3m, 5m and 15m. Changing the displayed timeframe preserves the other timeframe setups. Changing the symbol or restarting resets active tracking; journal chart flags remain available.
@@ -122,7 +128,6 @@ Real-money autonomous execution remains absent/disabled.
 - Jev remains an optional asynchronous review of the selected setup. Scores are uncalibrated quality, not win probabilities. More filters have not demonstrated a higher win rate; 90%+ accuracy is neither established nor guaranteed.
 - Local run: `cargo run -p agent6-engine`; in another terminal `cd apps/ui` then `npm run dev -- --host 127.0.0.1`. Open http://127.0.0.1:5173 and click Enable Alarms for browser audio. The server and browser must remain running for browser alarms.
 - Verified: 60 Rust tests pass, UI production build passes, live API exposes four analyses and 500 1m history candles, and browser loads with no page errors. Tests cover independent long/short lifecycles, price gaps across both targets, duplicate touches, old ticks and expiry. No live orders are submitted. Research training and out-of-sample profitability remain separate validation work.
-
 
 ## Chart terminal and market catalog (2026-09-23)
 
@@ -147,16 +152,13 @@ Search by coin or ticker using the top combobox (arrow keys, Enter, Escape suppo
 Data contract: https://bybit-exchange.github.io/docs/v5/market/instrument
 Chart API: https://tradingview.github.io/lightweight-charts/docs/api/interfaces/IChartApi
 
-
 ## Isolated demo validation
 
 Added stateless win/loss demonstrations using synthetic candles, manually seeded setups, production TP/SL lifecycle and the fill simulator. The UI animates entry and exits with explicit synthetic labels. Demo results never enter the live journal. Scripted win net: +18.0968 USDT after simulated costs. 63 Rust tests and 46 Python tests pass; UI build and browser demo passed. Live engine and dashboard running; Jev configured; no calibrated model deployed.
 
-
 ## Cross-timeframe visibility fix
 
 An empty selected interval previously hid open setups from other intervals. The dashboard now selects an open paper setup automatically, provides a setup selector independent of chart interval, and displays its levels, shaded zones, flags and sizing on the selected chart. Labels state both timeframes. New-entry blockers are distinct from existing trade monitoring; completed setups are labeled last setup. Chart price scaling includes all displayed setup levels. Default flags follow the displayed setup; All timeframe flags expands the history. Verified on the live 1m chart with the 5m short and five setup-selection regression checks. No trading thresholds changed.
-
 
 ## Calibrated ML model and deployment pipeline (2026-09-23)
 
@@ -168,4 +170,3 @@ An empty selected interval previously hid open setups from other intervals. The 
 - Updated `/api/health` and the UI ServiceBar to dynamically reflect the deployed model version (`calibrated_model: deployed (champion-v1)`) with a healthy green indicator.
 - Updated `RUNBOOK.md` with direct model training and deployment commands.
 - Verification: 66 Rust tests passed, 50 Python research tests passed, and TypeScript/Vite production build passed cleanly.
-
