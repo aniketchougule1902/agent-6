@@ -200,8 +200,8 @@ fn directional_live_edge(f:&FeatureSnapshot,direction:f64)->(f64,u8){
         (f.book_imbalance,0.10),((f.microprice_bps/1.5).clamp(-1.0,1.0),0.08),
         (f.liquidation_burst_5s,0.05),(oi_with_move,0.03),
     ];
-    let raw:f64=components.iter().map(|(value,weight)| value.clamp(-1.0,1.0)*weight).sum();
-    let votes=components.iter().filter(|(value,_)| direction * *value>0.03).count() as u8;
+    let raw:f64=components.iter().map(|(value,weight)| (*value).clamp(-1.0,1.0) * *weight).sum();
+    let votes=components.iter().filter(|(value,_)| direction * (*value)>0.03).count() as u8;
     ((direction*raw).clamp(-1.0,1.0),votes)
 }
 fn confirmation_ready(inner:&mut InternalState,a:&TimeframeAnalysis,now:u64,required_ms:u64)->bool{

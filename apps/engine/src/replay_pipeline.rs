@@ -93,6 +93,8 @@ mod tests {
             min_signal_score: 0.74,
             min_rr: 1.8,
             signal_cooldown_secs: 90,
+            signal_confirm_ms: 6_000,
+            min_live_edge: 0.08,
             max_spread_bps: 4.0,
             stale_feed_ms: 3_500,
             journal_path: PathBuf::from("unused-journal.jsonl"),
