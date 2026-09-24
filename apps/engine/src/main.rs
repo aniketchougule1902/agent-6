@@ -15,6 +15,7 @@ mod microstructure;
 mod outcomes;
 mod replay;
 mod replay_pipeline;
+mod replay_simulator;
 mod risk;
 mod runtime;
 mod signal;
