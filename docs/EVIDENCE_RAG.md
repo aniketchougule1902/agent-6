@@ -1,23 +1,13 @@
-# Local evidence / RAG layer
+# Local Evidence / RAG Safety Boundary
 
-Agent-6 keeps retrieval **outside the Rust signal hot path**. The first implementation is an offline SQLite hybrid lexical/recency index in `research/agent6_research/evidence.py`; it requires no API key and cannot place orders or mutate model weights.
+Agent-6's evidence index is an offline research/explanation component. It is deliberately not on the deterministic Rust signal hot path and requires no external API or secret.
 
-## Evidence contract
+Only explicit project evidence classes are accepted: normalized market/regime summaries, signal lifecycle records, evaluation/experiment reports, model cards/artifact manifests, incidents/postmortems, and project documentation. Every record carries source URI/type, source/event time, ingestion time, optional symbol/timeframe/model/schema version, SHA-256 content hash, and a stable evidence ID.
 
-Every document carries a stable evidence ID plus source type/URI, source event timestamp, ingestion timestamp, optional symbol/timeframe, model/schema versions, SHA-256 content hash, and the factual content. Exact versions deduplicate; changed content receives a new evidence ID so history remains auditable.
+Point-in-time retrieval enforces both `event_ts_ms <= T` and `ingestion_ts_ms <= T`. An observation cannot be ingested before its event timestamp. This prevents a replay/evaluation at T from retrieving evidence that was generated, discovered, or backfilled later.
 
-Allowed inputs are validated project evidence such as normalized/replayed market summaries, signal lifecycle/outcome records, model-card/artifact manifests, evaluation/experiment reports, incidents/postmortems, and project documentation. Generated commentary is not ground truth and must not be recursively ingested as a training label.
+Evidence is explicitly classified as `fact` or `inference`. Factual retrieval excludes inference by default. Model/generated commentary may be retained as inference for explanation audit, but cannot be marked as a validated training label and is never recursively promoted to ground truth by the index.
 
-## Leakage boundary
+Retrieval currently uses deterministic lexical overlap plus recency ranking. This keeps the dependency footprint small and behavior reproducible. Do not put it on the low-latency decision path until a representative corpus benchmark demonstrates useful retrieval quality and acceptable latency. Citations should expose the returned `evidence_id`, source URI, content hash, and timestamps so an explanation can be audited.
 
-`retrieve(..., as_of_ms=T)` requires **both** `event_ts_ms <= T` and `ingestion_ts_ms <= T`. This prevents a historical evaluation from seeing a future event or a document that described an older event but was only ingested later. Symbol/timeframe filters are optional and deterministic.
-
-Retrieval ranks lexical relevance with a bounded recency component and returns evidence IDs, hashes and provenance with every hit. Explanations should distinguish retrieved facts/citations from model inference.
-
-## Deployment rule
-
-Do not put retrieval on the low-latency Rust decision path until representative-session benchmarks show useful incremental value and acceptable latency. Initial consumers are research, post-trade diagnosis and asynchronous explanation/orchestrator context only.
-
-## Validation
-
-`pytest research/tests/test_evidence.py` covers future-event leakage, late-ingestion leakage, deduplication/versioning, deterministic ranking, metadata/citation preservation and fail-closed invalid metadata. Full research CI remains the release gate.
+The index is version-friendly: exact source/event/content duplicates are idempotent, while changed content receives a different hash/evidence ID. SQLite WAL + FULL synchronous mode is used for local durability. Existing databases are migrated with the evidence classification fields on open.

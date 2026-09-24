@@ -1,11 +1,12 @@
 from agent6_research.evidence import EvidenceDocument, EvidenceIndex
 
 
-def doc(content: str, event: int, ingest: int, *, uri: str = "recording://session-1") -> EvidenceDocument:
+def doc(content: str, event: int, ingest: int, *, uri: str = "recording://session-1", **kwargs) -> EvidenceDocument:
     return EvidenceDocument(
         source_type="normalized_market_summary", source_uri=uri,
         event_ts_ms=event, ingestion_ts_ms=ingest, content=content,
         symbol="BTCUSDT", timeframe="1", model_version="champion-v1", schema_version="events-v2",
+        **kwargs,
     )
 
 
@@ -47,6 +48,35 @@ def test_retrieval_is_deterministic_filtered_and_citable(tmp_path):
     assert a[0].source_uri == "recording://session-1"
     assert a[0].model_version == "champion-v1"
     assert a[0].schema_version == "events-v2"
+    assert a[0].evidence_kind == "fact"
+    idx.close()
+
+
+def test_inference_is_separated_from_factual_retrieval(tmp_path):
+    idx = EvidenceIndex(tmp_path / "evidence.sqlite")
+    fact = idx.ingest(doc("regime volatility elevated", 1_000, 1_000))
+    inference = idx.ingest(doc("regime volatility likely persists", 1_000, 1_000,
+                               uri="analysis://model", evidence_kind="inference"))
+    assert [h.evidence_id for h in idx.retrieve("regime volatility", as_of_ms=2_000)] == [fact]
+    hits = idx.retrieve("regime volatility", as_of_ms=2_000, include_inference=True)
+    assert {h.evidence_id for h in hits} == {fact, inference}
+    assert {h.evidence_kind for h in hits} == {"fact", "inference"}
+    idx.close()
+
+
+def test_rejects_untrusted_sources_impossible_time_and_recursive_labels(tmp_path):
+    idx = EvidenceIndex(tmp_path / "evidence.sqlite")
+    invalid = [
+        EvidenceDocument("web_scrape", "x://1", 0, 0, "content"),
+        doc("content", 2_000, 1_000),
+        doc("content", 1_000, 1_000, evidence_kind="inference", validated_label=True),
+    ]
+    for item in invalid:
+        try:
+            idx.ingest(item)
+            assert False, "expected validation failure"
+        except ValueError:
+            pass
     idx.close()
 
 
