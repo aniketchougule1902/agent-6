@@ -145,7 +145,7 @@ export function PaperTrading({ snapshot, signal, entryAllowed, entryTitle, entry
     </div>
 
     <div className="paper-balance-bar">
-      <div className="paper-stat"><span>Balance</span><strong>$${money(snapshot.paper_balance)}</strong></div>
+      <div className="paper-stat"><span>Balance</span><strong>{"$"}{money(snapshot.paper_balance)}</strong></div>
       <div className="paper-stat"><span>Equity</span><strong className={pnlClass(snapshot.paper_equity - 1000)}>$${money(snapshot.paper_equity)}</strong></div>
       <div className="paper-stat"><span>Unrealized</span><strong className={pnlClass(snapshot.paper_unrealized)}>{snapshot.paper_unrealized >= 0 ? "+" : ""}{money(snapshot.paper_unrealized)}</strong></div>
       <div className="paper-stat"><span>Realized P&L</span><strong className={pnlClass(snapshot.paper_realized)}>{snapshot.paper_realized >= 0 ? "+" : ""}{money(snapshot.paper_realized)}</strong></div>
@@ -154,7 +154,7 @@ export function PaperTrading({ snapshot, signal, entryAllowed, entryTitle, entry
     <div className="paper-analytics">
       <span>Trades <b>{snapshot.paper_closed_count}</b></span><span>Win rate <b>{snapshot.paper_win_rate != null ? `${(snapshot.paper_win_rate * 100).toFixed(1)}%` : "—"}</b></span>
       <span>Profit factor <b>{snapshot.paper_profit_factor != null ? snapshot.paper_profit_factor.toFixed(2) : "—"}</b></span><span>Fees <b>{money(snapshot.paper_fees)}</b></span>
-      <span>Available <b>$${money(view?.available??0)}</b></span><span>Reserved <b>$${money(view?.reserved??0)}</b></span>
+      <span>Available <b>{"$"}{money(view?.available??0)}</b></span><span>Reserved <b>{"$"}{money(view?.reserved??0)}</b></span>
     </div>
 
     {(error||view?.error)&&<div className="paper-error">{error||view?.error}</div>}
@@ -176,7 +176,7 @@ export function PaperTrading({ snapshot, signal, entryAllowed, entryTitle, entry
           <label>Notional $
             <input type="number" min={1} step={1} value={notional} onChange={e => { const v=Number(e.target.value); setNotional(Number.isFinite(v)&&v>0?v:1); }} />
           </label>
-          <div className="notional-presets">{presets.map(v=><button key={v} className={notional===v?"active":""} onClick={()=>setNotional(v)} disabled={busy}>$${v}</button>)}</div>
+          <div className="notional-presets">{presets.map(v=><button key={v} className={notional===v?"active":""} onClick={()=>setNotional(v)} disabled={busy}>{"$"}{v}</button>)}</div>
         </div>
         <button className={`execute-button ${signal?.side==="short"?"short":"long"}`} disabled={!canEnter||busy} onClick={() => signal && void enter(signal.id, notional)}>
           <span>{busy ? "WORKING…" : signal ? `EXECUTE PAPER ${signal.side.toUpperCase()}` : "WAITING FOR SIGNAL"}</span>
