@@ -346,7 +346,7 @@ function SignalCard({ signal, stale, chartTimeframe }: { signal: TradeSignal | n
   );
 }
 
-function moneyUi(value:number){return `${value.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;}
+function moneyUi(value:number){return "$"+value.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});}
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
