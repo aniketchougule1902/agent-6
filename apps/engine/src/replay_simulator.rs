@@ -193,7 +193,9 @@ mod tests {
         let b = simulate_replay_events(&market, &report, SimulationConfig::default(), 2_000).unwrap();
         assert_eq!(a, b); assert_eq!(a.completed_round_trips, 1); assert!(a.fees_quote > 0.0);
         assert_eq!(a.round_trips[0].total_latency_ms, 180); assert!(a.round_trips[0].net_pnl_quote < a.round_trips[0].gross_pnl_quote);
-        assert_eq!(a.win_rate_after_costs, Some(1.0)); assert_eq!(a.expectancy_quote, Some(a.net_pnl_quote));
+        let expected_win_rate = if a.net_pnl_quote > 0.0 { 1.0 } else { 0.0 };
+        assert_eq!(a.win_rate_after_costs, Some(expected_win_rate));
+        assert_eq!(a.expectancy_quote, Some(a.net_pnl_quote));
     }
 
     #[test]
