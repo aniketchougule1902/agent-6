@@ -146,7 +146,7 @@ export function PaperTrading({ snapshot, signal, entryAllowed, entryTitle, entry
 
     <div className="paper-balance-bar">
       <div className="paper-stat"><span>Balance</span><strong>{"$"}{money(snapshot.paper_balance)}</strong></div>
-      <div className="paper-stat"><span>Equity</span><strong className={pnlClass(snapshot.paper_equity - 1000)}>$${money(snapshot.paper_equity)}</strong></div>
+      <div className="paper-stat"><span>Equity</span><strong className={pnlClass(snapshot.paper_equity - 1000)}>{"$"}{money(snapshot.paper_equity)}</strong></div>
       <div className="paper-stat"><span>Unrealized</span><strong className={pnlClass(snapshot.paper_unrealized)}>{snapshot.paper_unrealized >= 0 ? "+" : ""}{money(snapshot.paper_unrealized)}</strong></div>
       <div className="paper-stat"><span>Realized P&L</span><strong className={pnlClass(snapshot.paper_realized)}>{snapshot.paper_realized >= 0 ? "+" : ""}{money(snapshot.paper_realized)}</strong></div>
     </div>
