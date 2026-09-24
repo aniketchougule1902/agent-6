@@ -16,14 +16,22 @@ The exposure evaluator is typed and fail-closed. Non-finite/non-positive equity 
 
 Open exposure is measured from each position's immutable entry price times remaining quantity. This is intentionally conservative and deterministic for admission; marked equity remains the denominator so losses tighten the budget.
 
-## Session breaker persistence status
+## Session breaker persistence and crash protocol
 
 `RiskStateSnapshot` is versioned and validates the session start, observed peak, latest equity, limits, timestamp, and latched halt reason. A latched breaker never clears merely because equity recovers.
 
-A new `RiskStateStore` provides an atomic, fsync-backed sidecar format bound to the paper account revision. It validates the nested risk snapshot and fails closed on corrupt JSON, unknown schema versions, unsafe/unlatched breached snapshots, or a paper/risk revision mismatch. Successful replacement also fsyncs the containing directory where supported. Tests cover durable latch round-trip, revision mismatch, corruption/schema rejection and replacement cleanup.
+`RiskStateStore` provides an atomic, fsync-backed sidecar bound to the paper account revision. It validates the nested risk snapshot and fails closed on corrupt JSON, unknown schema versions, unsafe/unlatched breached snapshots, or a paper/risk revision mismatch.
 
-This is deliberately not yet marked as transactional paper-ledger integration. The store is compiled and validated, but the paper mutation path still needs to persist the account and risk snapshot as one recoverable transaction (or with a journal/commit marker) before entry admission can rely on the sidecar after every crash boundary. Until that wiring is finished, startup reconstruction from closed-equity history cannot recover a drawdown that breached and fully recovered before a crash without leaving a closed-equity trace.
+The store now also implements a write-ahead `RiskCommitIntent` protocol for the dangerous crash window between the paper-ledger rename and risk-sidecar rename. A caller prepares an intent for exactly `revision N -> N+1` before mutating the paper account. Normal sidecar loads refuse to proceed while an unfinished intent exists. On restart, recovery is deterministic:
+
+- account still at N: the account mutation never committed, so the intent is aborted and the prior risk state remains authoritative;
+- account at N+1: the account commit won the race, so recovery completes the prepared risk snapshot at N+1 and removes the intent;
+- account at any other revision: state is ambiguous/corrupt, recovery fails closed and preserves the intent for investigation.
+
+Both the intent and risk snapshot use atomic temporary-file replacement, file fsync, and containing-directory fsync where supported. Tests cover prepared-intent admission blocking, unapplied-intent abort, post-account-commit completion, ambiguous-revision failure with evidence preservation, exact-target enforcement, corruption/schema rejection, revision mismatch, durable latch round-trip, and temp-file cleanup.
+
+The protocol primitive is compiled and validated, but the paper mutation methods still need to call `begin_commit` before their durable ledger write and `finish_commit` after it. Until that final wiring is complete, startup reconstruction from closed-equity history remains the active fallback and cannot recover an intratrade drawdown that breached and fully recovered before a crash without leaving a closed-equity trace.
 
 ## Alerts and next work
 
-Existing signal/TP/SL/feed alarms remain unchanged. The next checkpoint is to wire the revision-bound store into paper mutations/recovery with an explicit crash protocol, then emit a dedicated risk-halt alarm/UI state without blocking monitoring or exits for positions that were already open.
+Existing signal/TP/SL/feed alarms remain unchanged. The next checkpoint is to wire this commit protocol through paper enter/observe/close/reset and startup recovery, then emit a dedicated risk-halt alarm/UI state without blocking monitoring or exits for positions that were already open.
