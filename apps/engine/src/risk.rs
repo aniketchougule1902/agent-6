@@ -1,6 +1,7 @@
-use anyhow::{bail, Result};
+use anyhow::{bail, ensure, Result};
+use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct RiskLimits {
     /// Positive fraction of session-start equity, e.g. 0.03 = 3%.
     pub max_daily_loss_fraction: f64,
@@ -24,7 +25,8 @@ impl RiskLimits {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RiskHaltReason {
     DailyLoss,
     Drawdown,
@@ -39,6 +41,55 @@ impl std::fmt::Display for RiskHaltReason {
     }
 }
 
+/// Durable representation of the latched risk state. The schema version is
+/// explicit so future changes cannot silently reinterpret an older state file.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct RiskStateSnapshot {
+    pub schema_version: u32,
+    pub limits: RiskLimits,
+    pub session_start_equity: f64,
+    pub peak_equity: f64,
+    pub last_equity: f64,
+    pub halt: Option<RiskHaltReason>,
+    pub observed_at_ms: u64,
+}
+
+impl RiskStateSnapshot {
+    pub const SCHEMA_VERSION: u32 = 1;
+
+    pub fn validate(self) -> Result<Self> {
+        ensure!(
+            self.schema_version == Self::SCHEMA_VERSION,
+            "unsupported risk snapshot schema version"
+        );
+        self.limits.validate()?;
+        validate_equity(self.session_start_equity)?;
+        validate_equity(self.peak_equity)?;
+        validate_equity(self.last_equity)?;
+        ensure!(
+            self.peak_equity >= self.session_start_equity,
+            "risk snapshot peak cannot be below session start"
+        );
+        ensure!(
+            self.peak_equity >= self.last_equity,
+            "risk snapshot peak cannot be below last equity"
+        );
+        ensure!(self.observed_at_ms > 0, "risk snapshot timestamp is required");
+
+        let daily_loss = (self.session_start_equity - self.last_equity)
+            / self.session_start_equity;
+        let drawdown = (self.peak_equity - self.last_equity) / self.peak_equity;
+        if self.halt.is_none() {
+            ensure!(
+                daily_loss < self.limits.max_daily_loss_fraction
+                    && drawdown < self.limits.max_drawdown_fraction,
+                "unlatched risk snapshot already breaches configured limits"
+            );
+        }
+        Ok(self)
+    }
+}
+
 /// Fail-closed session risk guard. Once tripped it is latched until an explicit
 /// session reset; subsequent equity recovery cannot silently re-enable signals.
 #[derive(Debug, Clone)]
@@ -46,6 +97,7 @@ pub struct SessionRiskCircuitBreaker {
     limits: RiskLimits,
     session_start_equity: f64,
     peak_equity: f64,
+    last_equity: f64,
     halt: Option<RiskHaltReason>,
 }
 
@@ -57,12 +109,38 @@ impl SessionRiskCircuitBreaker {
             limits,
             session_start_equity,
             peak_equity: session_start_equity,
+            last_equity: session_start_equity,
             halt: None,
         })
     }
 
+    pub fn restore(snapshot: RiskStateSnapshot) -> Result<Self> {
+        let snapshot = snapshot.validate()?;
+        Ok(Self {
+            limits: snapshot.limits,
+            session_start_equity: snapshot.session_start_equity,
+            peak_equity: snapshot.peak_equity,
+            last_equity: snapshot.last_equity,
+            halt: snapshot.halt,
+        })
+    }
+
+    pub fn snapshot(&self, observed_at_ms: u64) -> Result<RiskStateSnapshot> {
+        RiskStateSnapshot {
+            schema_version: RiskStateSnapshot::SCHEMA_VERSION,
+            limits: self.limits,
+            session_start_equity: self.session_start_equity,
+            peak_equity: self.peak_equity,
+            last_equity: self.last_equity,
+            halt: self.halt,
+            observed_at_ms,
+        }
+        .validate()
+    }
+
     pub fn observe_equity(&mut self, equity: f64) -> Result<Option<RiskHaltReason>> {
         validate_equity(equity)?;
+        self.last_equity = equity;
         if self.halt.is_some() {
             return Ok(self.halt);
         }
@@ -147,6 +225,47 @@ mod tests {
             evaluate_equity_history(1000.0, [1100.0, 1066.0, 1120.0], 1150.0, limits()).unwrap(),
             Some(RiskHaltReason::Drawdown)
         );
+    }
+
+    #[test]
+    fn snapshot_round_trip_preserves_intratrade_peak_and_latch() {
+        let mut guard = SessionRiskCircuitBreaker::new(1000.0, limits()).unwrap();
+        assert_eq!(guard.observe_equity(1120.0).unwrap(), None);
+        assert_eq!(guard.observe_equity(1080.0).unwrap(), Some(RiskHaltReason::Drawdown));
+        let encoded = serde_json::to_vec(&guard.snapshot(1234).unwrap()).unwrap();
+        let decoded: RiskStateSnapshot = serde_json::from_slice(&encoded).unwrap();
+        let mut restored = SessionRiskCircuitBreaker::restore(decoded).unwrap();
+        assert!(restored.is_halted());
+        assert_eq!(restored.observe_equity(1200.0).unwrap(), Some(RiskHaltReason::Drawdown));
+        let restored_snapshot = restored.snapshot(1235).unwrap();
+        assert_eq!(restored_snapshot.peak_equity, 1120.0);
+        assert_eq!(restored_snapshot.last_equity, 1200.0);
+    }
+
+    #[test]
+    fn snapshot_rejects_corrupt_or_unsafe_state() {
+        let base = RiskStateSnapshot {
+            schema_version: 1,
+            limits: limits(),
+            session_start_equity: 1000.0,
+            peak_equity: 1100.0,
+            last_equity: 1090.0,
+            halt: None,
+            observed_at_ms: 1,
+        };
+        assert!(base.validate().is_ok());
+        assert!(RiskStateSnapshot { schema_version: 99, ..base }.validate().is_err());
+        assert!(RiskStateSnapshot { peak_equity: 900.0, ..base }.validate().is_err());
+        assert!(RiskStateSnapshot { last_equity: f64::NAN, ..base }.validate().is_err());
+        assert!(RiskStateSnapshot { observed_at_ms: 0, ..base }.validate().is_err());
+        assert!(RiskStateSnapshot {
+            peak_equity: 1100.0,
+            last_equity: 1060.0,
+            halt: None,
+            ..base
+        }
+        .validate()
+        .is_err());
     }
 
     #[test]
