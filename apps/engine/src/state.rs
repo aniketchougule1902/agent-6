@@ -25,6 +25,15 @@ pub(crate) struct OiSample {
     pub value: f64,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct PendingSignalConfirmation {
+    pub candle_ms: u64,
+    pub side: String,
+    pub setup: String,
+    pub first_pass_ms: u64,
+    pub pass_ticks: u32,
+}
+
 #[derive(Debug)]
 pub(crate) struct InternalState {
     pub connected: bool,
@@ -61,6 +70,7 @@ pub(crate) struct InternalState {
     pub signal_history: VecDeque<TradeSignal>,
     pub analyses: Vec<TimeframeAnalysis>,
     pub admitted_candles: HashMap<String, u64>,
+    pub pending_signal_confirmations: HashMap<String, PendingSignalConfirmation>,
     pub last_signal_at_ms: u64,
     pub jev_responded: bool,
     pub model: Option<crate::model::ModelEvaluator>,
@@ -105,6 +115,7 @@ impl InternalState {
             signal_history: VecDeque::new(),
             analyses: Vec::new(),
             admitted_candles: HashMap::new(),
+            pending_signal_confirmations: HashMap::new(),
             last_signal_at_ms: 0,
             jev_responded: false,
             model: None,
@@ -212,6 +223,7 @@ impl InternalState {
         self.signals.clear();
         self.analyses.clear();
         self.admitted_candles.clear();
+        self.pending_signal_confirmations.clear();
         self.trade_flow.clear();
         self.liquidation_flow.clear();
         self.oi_samples.clear();
@@ -224,6 +236,7 @@ impl InternalState {
     pub fn reset_signal_context(&mut self) {
         self.features = None;
         self.active_signal = None;
+        self.pending_signal_confirmations.clear();
         self.last_signal_at_ms = 0;
         self.updated_at_ms = now_ms();
     }

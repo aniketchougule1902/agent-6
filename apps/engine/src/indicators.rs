@@ -85,6 +85,18 @@ pub fn analyze(bars: &VecDeque<Candle>, timeframe: &str, now: u64) -> Option<Tim
     let pullback = direction > 0.0 && last.low <= ema21 + 0.3*atr14 && last.close > ema21 && last.close > last.open
         || direction < 0.0 && last.high >= ema21-0.3*atr14 && last.close < ema21 && last.close < last.open;
     let setup = if breakout {"channel_breakout"} else if pullback {"trend_pullback"} else {"waiting"};
+    let candle_range = (last.high-last.low).max(f64::EPSILON);
+    let candle_body = (last.close-last.open).abs();
+    let body_fraction = (candle_body/candle_range).clamp(0.0,1.0);
+    let directional_close_location = if direction > 0.0 {
+        ((last.close-last.low)/candle_range).clamp(0.0,1.0)
+    } else if direction < 0.0 {
+        ((last.high-last.close)/candle_range).clamp(0.0,1.0)
+    } else {0.0};
+    let breakout_margin_atr = if breakout {
+        if direction > 0.0 {(last.close-resistance)/atr14} else {(support-last.close)/atr14}
+    } else {0.0};
+    let range_atr = candle_range/atr14;
     let mut blockers = vec![];
     if now.saturating_sub(last.start_ms+duration) > duration {blockers.push("Candle history is stale".into());}
     if closed[closed.len()-60..].windows(2).any(|w| w[1].start_ms != w[0].start_ms+duration) {blockers.push("Gap in recent candle history".into());}
@@ -95,16 +107,31 @@ pub fn analyze(bars: &VecDeque<Candle>, timeframe: &str, now: u64) -> Option<Tim
     if direction > 0.0 && !(45.0..=72.0).contains(&rsi14) || direction < 0.0 && !(28.0..=55.0).contains(&rsi14) {blockers.push("RSI outside continuation range".into());}
     if relative_volume < if breakout {1.2} else {0.7} {blockers.push("Insufficient relative volume".into());}
     if direction*(last.close-vwap20) < 0.0 {blockers.push("Price disagrees with rolling VWAP".into());}
-    let trend = if direction != 0.0 {(adx14/35.0).clamp(0.0,1.0)} else {0.0};
-    let momentum = if direction*macd_histogram > 0.0 {1.0} else {0.0};
-    let structure = if setup != "waiting" {1.0} else {0.0};
-    let participation = (relative_volume/1.5).clamp(0.0,1.0);
+    if breakout {
+        if breakout_margin_atr < 0.08 {blockers.push("Breakout close is too close to the old channel; fakeout risk".into());}
+        if breakout_margin_atr > 1.10 {blockers.push("Breakout is overextended beyond the entry window".into());}
+        if body_fraction < 0.45 {blockers.push("Breakout candle body is weak versus its wick range".into());}
+        if directional_close_location < 0.68 {blockers.push("Breakout candle shows rejection near the close".into());}
+        if range_atr > 2.0 {blockers.push("Breakout candle is an exhaustion-sized range".into());}
+    }
+    let trend = if direction != 0.0 {((adx14-18.0)/22.0).clamp(0.0,1.0)} else {0.0};
+    let momentum = if direction*macd_histogram > 0.0 {
+        ((macd_histogram.abs()/atr14)/0.18).clamp(0.0,1.0)
+    } else {0.0};
+    let structure = if breakout {
+        let margin_score = (breakout_margin_atr/0.35).clamp(0.0,1.0)
+            * (1.0-(breakout_margin_atr-0.55).max(0.0)/0.55).clamp(0.0,1.0);
+        (0.45*margin_score + 0.30*body_fraction + 0.25*directional_close_location).clamp(0.0,1.0)
+    } else if pullback {
+        (0.55*body_fraction + 0.45*directional_close_location).clamp(0.0,1.0)
+    } else {0.0};
+    let participation = (relative_volume/1.8).clamp(0.0,1.0);
     Some(TimeframeAnalysis {
         timeframe: timeframe.into(), candle_ms:last.start_ms, close:last.close,
         ema9,ema21,ema50,rsi14,adx14,macd_histogram,atr14,vwap20,
         bb_upper:mean+2.0*deviation,bb_lower:mean-2.0*deviation,relative_volume,support,resistance,
         bias: if direction>0.0 {"long"} else if direction<0.0 {"short"} else {"neutral"}.into(),
-        setup:setup.into(), quality:0.30*trend+0.25*momentum+0.25*structure+0.20*participation,blockers,
+        setup:setup.into(), quality:(0.30*trend+0.25*momentum+0.30*structure+0.15*participation).clamp(0.0,1.0),blockers,
     })
 }
 
@@ -128,6 +155,7 @@ mod tests {
         let a=analyze(&bars(),"1",6_000_000).unwrap();
         assert!((a.rsi14-100.0).abs()<1e-8); assert!((a.adx14-100.0).abs()<1e-8);
         assert_eq!(a.resistance,199.0); assert!(a.atr14.is_finite());
+        assert!(a.blockers.iter().any(|b| b.contains("weak versus its wick range")));
     }
     #[test]
     fn bad_data_fails_closed_and_gaps_are_blocked() {

@@ -1,7 +1,7 @@
 use crate::{
     config::Config,
     runtime,
-    state::{now_ms, AppState, InternalState},
+    state::{now_ms, AppState, InternalState, PendingSignalConfirmation},
     types::{
         AlertKind, Candle, EngineEvent, FeatureSnapshot, MarketRegime, Side, SignalStatus,
         TradeSignal, TimeframeAnalysis,
@@ -72,17 +72,40 @@ pub(crate) fn evaluate_internal(
         }).collect();
         if let Some(features) = compute_features(&inner, now) {
             inner.features = Some(features.clone());
-            let biases: Vec<_> = analyses.iter().map(|a| (a.timeframe.clone(), a.bias.clone())).collect();
+            let companions: Vec<_> = analyses.iter().map(|a| (
+                a.timeframe.clone(), a.bias.clone(), a.quality, a.adx14, a.macd_histogram
+            )).collect();
             for analysis in &mut analyses {
                 let direction = if analysis.bias == "long" {1.0} else {-1.0};
-                let flow = (features.trade_flow_imbalance + features.book_imbalance_top5) / 2.0;
-                analysis.quality = (0.8 * analysis.quality + 0.2 * (0.5 + 0.5 * direction * flow)).clamp(0.0,1.0);
+                let (live_edge, live_votes) = directional_live_edge(&features, direction);
+                let live_quality = (0.5 + 0.5*live_edge).clamp(0.0,1.0);
+                analysis.quality = (0.85 * analysis.quality + 0.15 * live_quality).clamp(0.0,1.0);
                 if stale { analysis.blockers.push("Live feed is stale".into()); }
                 if features.spread_bps > config.max_spread_bps {analysis.blockers.push("Spread above limit".into());}
-                if direction * flow < -0.15 {analysis.blockers.push("Order flow opposes the setup".into());}
+                if live_edge < config.min_live_edge {analysis.blockers.push(format!("Live microstructure edge is too weak ({live_edge:.2} < {:.2})",config.min_live_edge));}
+                if live_votes < 3 {analysis.blockers.push("Live order-book/trade-flow consensus has fewer than 3 confirming components".into());}
+                let one_minute_atr_bps = (features.atr_14/features.last_price*10_000.0).max(1.0);
+                if direction*features.momentum_1m_bps < -0.35*one_minute_atr_bps {
+                    analysis.blockers.push("1m momentum reversed against the setup before entry".into());
+                }
                 let higher = match analysis.timeframe.as_str() {"1"=>"3","3"=>"5","5"=>"15",_=>"5"};
-                if !biases.iter().any(|(tf,bias)| tf==higher && bias==&analysis.bias && bias!="neutral") {analysis.blockers.push("Companion timeframe does not confirm".into());}
-                if (features.last_price-analysis.close).abs()>analysis.atr14*0.75 {analysis.blockers.push("Live price moved too far from the closed candle".into());}
+                let companion_ok = companions.iter().any(|(tf,bias,quality,adx,macd)| {
+                    tf==higher && bias==&analysis.bias && bias!="neutral"
+                        && *quality>=0.50 && *adx>=18.0 && direction * *macd>0.0
+                });
+                if !companion_ok {analysis.blockers.push("Companion timeframe lacks trend/momentum confirmation".into());}
+                if (features.last_price-analysis.close).abs()>analysis.atr14*0.60 {analysis.blockers.push("Live price moved too far from the closed candle".into());}
+                if direction*(features.last_price-analysis.close) < -analysis.atr14*0.25 {
+                    analysis.blockers.push("Price moved adversely after the signal candle closed".into());
+                }
+                if analysis.setup=="channel_breakout" {
+                    let breakout_level=if direction>0.0 {analysis.resistance} else {analysis.support};
+                    let hold=direction*(features.last_price-breakout_level)/analysis.atr14;
+                    if hold<0.04 {analysis.blockers.push("Breakout level was not held after the close".into());}
+                    if hold>1.00 {analysis.blockers.push("Breakout entry is overextended from the channel".into());}
+                } else if analysis.setup=="trend_pullback" && direction*(features.last_price-analysis.ema21)<-0.10*analysis.atr14 {
+                    analysis.blockers.push("Pullback lost EMA21 before entry".into());
+                }
                 if analysis.quality < config.min_signal_score {analysis.blockers.push("Quality below configured threshold".into());}
                 if analysis.atr14/features.last_price*10_000.0>150.0 {analysis.blockers.push("Abnormal volatility".into());}
                 let repeated=inner.admitted_candles.get(&analysis.timeframe)==Some(&analysis.candle_ms);
@@ -97,6 +120,18 @@ pub(crate) fn evaluate_internal(
                             ));
                         }
                     }
+                }
+                if analysis.blockers.is_empty() {
+                    if !confirmation_ready(inner, analysis, now, config.signal_confirm_ms) {
+                        let elapsed=inner.pending_signal_confirmations.get(&analysis.timeframe)
+                            .map(|p| now.saturating_sub(p.first_pass_ms)).unwrap_or(0);
+                        analysis.blockers.push(format!(
+                            "Arming signal: live agreement held {}ms / {}ms",
+                            elapsed.min(config.signal_confirm_ms), config.signal_confirm_ms
+                        ));
+                    }
+                } else {
+                    inner.pending_signal_confirmations.remove(&analysis.timeframe);
                 }
                 if analysis.blockers.is_empty() {
                     if let Some(signal)=build_signal(config,&features,analysis,&market.symbol,now,inner.model.as_ref()) {
@@ -156,6 +191,30 @@ fn compute_features(s: &InternalState, now: u64) -> Option<FeatureSnapshot> {
     Some(FeatureSnapshot { ts_ms: now, feed_age_ms: now.saturating_sub(s.last_market_event_ms), orderbook_age_ms: now.saturating_sub(s.orderbook_event_ms), last_price: price, spread_bps, atr_14: atr, vwap_20: vwap, momentum_1m_bps: momentum, trend_5m_bps: trend_5m, trend_15m_bps: trend_15m, book_imbalance: s.book_imbalance, book_imbalance_top5: s.book_imbalance_top5, microprice_bps: s.microprice_bps, bid_depth_slope: s.bid_depth_slope, ask_depth_slope: s.ask_depth_slope, depth_pressure: s.depth_pressure, trade_flow_imbalance: flow, trade_velocity_5s: trade_metrics.velocity_per_sec, signed_notional_5s: trade_metrics.signed_notional, large_trade_imbalance: trade_metrics.large_trade_imbalance, liquidation_pressure: liq, liquidation_burst_5s: liquidation_burst, open_interest: s.open_interest, open_interest_delta_pct: oi_delta_pct, open_interest_delta_1m_pct: oi_delta_1m_pct, open_interest_delta_5m_pct: oi_delta_5m_pct, funding_rate: s.funding_rate, regime, long_score, short_score })
 }
 
+fn directional_live_edge(f:&FeatureSnapshot,direction:f64)->(f64,u8){
+    let oi_with_move=(f.open_interest_delta_1m_pct/0.08).clamp(-1.0,1.0)
+        * (f.momentum_1m_bps/10.0).clamp(-1.0,1.0);
+    let components=[
+        (f.trade_flow_imbalance,0.24),(f.book_imbalance_top5,0.20),
+        (f.large_trade_imbalance,0.16),(f.depth_pressure,0.14),
+        (f.book_imbalance,0.10),((f.microprice_bps/1.5).clamp(-1.0,1.0),0.08),
+        (f.liquidation_burst_5s,0.05),(oi_with_move,0.03),
+    ];
+    let raw:f64=components.iter().map(|(value,weight)| value.clamp(-1.0,1.0)*weight).sum();
+    let votes=components.iter().filter(|(value,_)| direction * *value>0.03).count() as u8;
+    ((direction*raw).clamp(-1.0,1.0),votes)
+}
+fn confirmation_ready(inner:&mut InternalState,a:&TimeframeAnalysis,now:u64,required_ms:u64)->bool{
+    if required_ms==0{return true;}
+    let side=a.bias.clone();let setup=a.setup.clone();
+    let pending=inner.pending_signal_confirmations.entry(a.timeframe.clone()).or_insert_with(||PendingSignalConfirmation{candle_ms:a.candle_ms,side:side.clone(),setup:setup.clone(),first_pass_ms:now,pass_ticks:0});
+    if pending.candle_ms!=a.candle_ms||pending.side!=side||pending.setup!=setup{
+        *pending=PendingSignalConfirmation{candle_ms:a.candle_ms,side,setup,first_pass_ms:now,pass_ticks:0};
+    }
+    pending.pass_ticks=pending.pass_ticks.saturating_add(1);
+    now.saturating_sub(pending.first_pass_ms)>=required_ms&&pending.pass_ticks>=3
+}
+
 fn build_signal(config:&Config, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol:&str, now:u64, model:Option<&crate::model::ModelEvaluator>) -> Option<TradeSignal> {
     let price=f.last_price; let side=if a.bias=="long" {Side::Long} else {Side::Short}; let direction=if a.bias=="long" {1.0} else {-1.0};
     let anchor=if a.setup=="channel_breakout" {if direction>0.0 {a.resistance} else {a.support}} else {a.ema21};
@@ -164,7 +223,8 @@ fn build_signal(config:&Config, f:&FeatureSnapshot, a:&TimeframeAnalysis, symbol
     let tick=crate::catalog::tick_size(symbol)?; let (stop_loss,tp1,tp2)=rounded_levels(price,direction,risk,rr,tick)?; let actual_risk=(price-stop_loss).abs(); let actual_reward=(tp2-price).abs();
     if (actual_reward-cost)/(actual_risk+cost)<config.min_rr {return None;} let rr=actual_reward/actual_risk; if stop_loss<=0.0 || tp1<=0.0 || tp2<=0.0 {return None;}
     let (confidence, calibrated, ml_reasons) = if let Some(m) = model { let pred=m.predict(f,a); (pred.calibrated_probability,true,vec![format!("ML calibrated probability: {:.1}% (Brier {:.3}, ECE {:.3})",pred.calibrated_probability*100.0,pred.brier,pred.ece)]) } else {(a.quality,false,vec![])};
-    let mut reasons=vec!["strategy:a6-live-v2".into(),format!("raw-quality:{:.10}",a.quality),a.setup.replace('_'," "),format!("Closed {}m candle",a.timeframe),format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),format!("Relative volume {:.2}x",a.relative_volume),"Companion timeframe and live flow checked".into(),format!("Estimated round-trip costs {:.1} bps",config.round_trip_cost_bps+f.spread_bps)]; reasons.extend(ml_reasons);
+    let (live_edge,live_votes)=directional_live_edge(f,direction);
+    let mut reasons=vec!["strategy:a6-live-v3".into(),format!("raw-quality:{:.10}",a.quality),a.setup.replace('_'," "),format!("Closed {}m candle",a.timeframe),format!("ADX {:.1} / RSI {:.1}",a.adx14,a.rsi14),format!("Relative volume {:.2}x",a.relative_volume),format!("Live microstructure edge {:+.2} with {}/8 confirming components",live_edge,live_votes),format!("Live agreement held at least {}ms",config.signal_confirm_ms),format!("Estimated round-trip costs {:.1} bps",config.round_trip_cost_bps+f.spread_bps)]; reasons.extend(ml_reasons);
     Some(TradeSignal { id:stable_signal_id(symbol,&a.timeframe,a.candle_ms,&side),symbol:symbol.into(),timeframe:a.timeframe.clone(),side,status:SignalStatus::Active,created_at_ms:now,last_event_ms:now,observed_exit_price:None,entry_low:price,entry_high:price,stop_loss,tp1,tp2,risk_reward_tp2:rr,confidence,calibrated,invalidation:format!("Paper reference entry. Stop {:.10}; expires in {} minutes. Net estimated TP2 R:R {:.2}.",stop_loss,hold_ms(&a.timeframe)/60_000,(actual_reward-cost)/(actual_risk+cost)),reasons })
 }
 
@@ -195,6 +255,8 @@ fn normalized_flow(samples:&[f64])->f64{let signed:f64=samples.iter().sum();let 
 fn signed_unit(value:f64)->f64{value.tanh()}
 
 #[cfg(test)]mod tests{use super::*;fn test_signal(id:&str,side:Side,status:SignalStatus,last_event_ms:u64)->TradeSignal{TradeSignal{id:id.into(),symbol:"BTCUSDT".into(),timeframe:"1".into(),side,status,created_at_ms:1_000,entry_low:100.0,entry_high:100.0,stop_loss:99.0,tp1:101.0,tp2:102.5,risk_reward_tp2:2.5,confidence:0.7,calibrated:false,invalidation:"original".into(),reasons:vec![],last_event_ms,observed_exit_price:None}}
+fn test_analysis()->TimeframeAnalysis{TimeframeAnalysis{timeframe:"15".into(),candle_ms:60_000,close:100.0,ema9:101.0,ema21:100.0,ema50:99.0,rsi14:60.0,adx14:30.0,macd_histogram:1.0,atr14:2.0,vwap20:99.5,bb_upper:104.0,bb_lower:96.0,relative_volume:1.8,support:95.0,resistance:99.0,bias:"long".into(),setup:"channel_breakout".into(),quality:0.8,blockers:vec![]}}
+#[test]fn confirmation_requires_continuous_same_thesis_window(){let mut inner=InternalState::new();let mut a=test_analysis();assert!(!confirmation_ready(&mut inner,&a,1_000,6_000));assert!(!confirmation_ready(&mut inner,&a,3_000,6_000));assert!(confirmation_ready(&mut inner,&a,7_000,6_000));a.candle_ms+=60_000;assert!(!confirmation_ready(&mut inner,&a,8_000,6_000));}
 #[test]fn opposite_admitted_candidate_explicitly_reverses_and_archives_old_signal(){let mut inner=InternalState::new();inner.signals.insert("1".into(),test_signal("old",Side::Long,SignalStatus::Active,1_000));let candidate=test_signal("new",Side::Short,SignalStatus::Active,2_000);let(admit,event)=prepare_signal_transition(&mut inner,&candidate,99.5,2_000,30_000);assert!(admit);let event=event.expect("reversal event");assert_eq!(event.event_type,"reversed");assert_eq!(event.signal.as_ref().unwrap().status,SignalStatus::Reversed);assert_eq!(inner.signal_history.len(),1);assert_eq!(inner.signal_history.back().unwrap().id,"old");assert_eq!(inner.signal_history.back().unwrap().observed_exit_price,Some(99.5));}
 #[test]fn same_side_candidate_does_not_replace_active_signal(){let mut inner=InternalState::new();inner.signals.insert("1".into(),test_signal("old",Side::Long,SignalStatus::Active,1_000));let candidate=test_signal("new",Side::Long,SignalStatus::Active,2_000);let(admit,event)=prepare_signal_transition(&mut inner,&candidate,100.5,2_000,30_000);assert!(!admit);assert!(event.is_none());assert!(inner.signal_history.is_empty());assert_eq!(inner.signals["1"].id,"old");}
 #[test]fn terminal_signal_is_archived_only_after_cooldown_before_replacement(){let mut inner=InternalState::new();inner.signals.insert("1".into(),test_signal("old",Side::Long,SignalStatus::StopLossHit,10_000));let candidate=test_signal("new",Side::Short,SignalStatus::Active,20_000);let(early,_)=prepare_signal_transition(&mut inner,&candidate,99.0,20_000,30_000);assert!(!early);let(late,_)=prepare_signal_transition(&mut inner,&candidate,99.0,41_000,30_000);assert!(late);assert_eq!(inner.signal_history.back().unwrap().id,"old");}

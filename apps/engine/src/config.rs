@@ -9,6 +9,8 @@ pub struct Config {
     pub min_signal_score: f64,
     pub min_rr: f64,
     pub signal_cooldown_secs: u64,
+    pub signal_confirm_ms: u64,
+    pub min_live_edge: f64,
     pub max_spread_bps: f64,
     pub stale_feed_ms: u64,
     pub journal_path: PathBuf,
@@ -30,6 +32,8 @@ impl Config {
             min_signal_score: parse("A6_MIN_SIGNAL_SCORE", 0.74),
             min_rr: parse("A6_MIN_RR", 1.8),
             signal_cooldown_secs: parse("A6_SIGNAL_COOLDOWN_SECS", 90),
+            signal_confirm_ms: parse("A6_SIGNAL_CONFIRM_MS", 6000),
+            min_live_edge: parse("A6_MIN_LIVE_EDGE", 0.08),
             max_spread_bps: parse("A6_MAX_SPREAD_BPS", 4.0),
             stale_feed_ms: parse("A6_STALE_FEED_MS", 3500),
             journal_path: env::var("A6_JOURNAL_PATH")
