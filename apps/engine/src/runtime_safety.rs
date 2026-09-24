@@ -10,6 +10,39 @@ pub enum RuntimeHaltReason {
     AbnormalVolatility,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeSafetyTransition {
+    Unchanged,
+    Halted(RuntimeHaltReason),
+    HaltReasonChanged { from: RuntimeHaltReason, to: RuntimeHaltReason },
+    Recovered(RuntimeHaltReason),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct RuntimeSafetyState {
+    current_halt: Option<RuntimeHaltReason>,
+}
+
+impl RuntimeSafetyState {
+    pub fn current_halt(&self) -> Option<RuntimeHaltReason> {
+        self.current_halt
+    }
+
+    /// Applies a freshly evaluated safety result and returns only explicit state
+    /// transitions. Repeated observations are idempotent and therefore cannot
+    /// spam alarms; recovery always identifies the reason that was cleared.
+    pub fn apply(&mut self, next: Option<RuntimeHaltReason>) -> RuntimeSafetyTransition {
+        let transition = match (self.current_halt, next) {
+            (None, None) | (Some(_), Some(_)) if self.current_halt == next => RuntimeSafetyTransition::Unchanged,
+            (None, Some(reason)) => RuntimeSafetyTransition::Halted(reason),
+            (Some(from), Some(to)) => RuntimeSafetyTransition::HaltReasonChanged { from, to },
+            (Some(reason), None) => RuntimeSafetyTransition::Recovered(reason),
+        };
+        self.current_halt = next;
+        transition
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct RuntimeSafetyLimits {
     pub max_feed_age_ms: u64,
@@ -32,6 +65,7 @@ pub struct RuntimeSafetyObservation {
     pub connected: bool,
     pub last_market_event_ms: u64,
     pub orderbook_event_ms: u64,
+    pub model_required: bool,
     pub model_created_at_ms: Option<u64>,
     pub model_integrity_ok: bool,
     pub feature_integrity_ok: bool,
@@ -68,13 +102,17 @@ pub fn evaluate_runtime_safety(
         return Ok(Some(RuntimeHaltReason::CorruptData));
     }
 
-    if let Some(created_at_ms) = observation.model_created_at_ms {
-        if created_at_ms == 0
-            || created_at_ms > observation.now_ms
-            || observation.now_ms.saturating_sub(created_at_ms) > limits.max_model_age_ms
-        {
-            return Ok(Some(RuntimeHaltReason::StaleModel));
+    match observation.model_created_at_ms {
+        Some(created_at_ms) => {
+            if created_at_ms == 0
+                || created_at_ms > observation.now_ms
+                || observation.now_ms.saturating_sub(created_at_ms) > limits.max_model_age_ms
+            {
+                return Ok(Some(RuntimeHaltReason::StaleModel));
+            }
         }
+        None if observation.model_required => return Ok(Some(RuntimeHaltReason::StaleModel)),
+        None => {}
     }
 
     match (observation.last_price, observation.atr) {
@@ -115,6 +153,7 @@ mod tests {
             connected: true,
             last_market_event_ms: now - 100,
             orderbook_event_ms: now - 100,
+            model_required: true,
             model_created_at_ms: Some(now - 1_000),
             model_integrity_ok: true,
             feature_integrity_ok: true,
@@ -142,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn stale_and_future_models_halt_instead_of_silently_falling_back() {
+    fn stale_future_or_required_missing_models_halt_instead_of_falling_back() {
         let now = 40 * 86_400_000;
         let mut o = healthy(now);
         o.model_created_at_ms = Some(now - 31 * 86_400_000);
@@ -150,6 +189,17 @@ mod tests {
         let mut o = healthy(now);
         o.model_created_at_ms = Some(now + 1);
         assert_eq!(evaluate_runtime_safety(o, limits()).unwrap(), Some(RuntimeHaltReason::StaleModel));
+        let mut o = healthy(now);
+        o.model_created_at_ms = None;
+        assert_eq!(evaluate_runtime_safety(o, limits()).unwrap(), Some(RuntimeHaltReason::StaleModel));
+    }
+
+    #[test]
+    fn baseline_mode_can_explicitly_run_without_a_model() {
+        let mut o = healthy(100_000);
+        o.model_required = false;
+        o.model_created_at_ms = None;
+        assert_eq!(evaluate_runtime_safety(o, limits()).unwrap(), None);
     }
 
     #[test]
@@ -178,5 +228,18 @@ mod tests {
         let mut o = healthy(historical_now);
         o.model_created_at_ms = Some(historical_now - 10_000);
         assert_eq!(evaluate_runtime_safety(o, limits()).unwrap(), None);
+    }
+
+    #[test]
+    fn halt_transitions_are_idempotent_and_recovery_is_explicit() {
+        let mut state = RuntimeSafetyState::default();
+        assert_eq!(state.apply(None), RuntimeSafetyTransition::Unchanged);
+        assert_eq!(state.apply(Some(RuntimeHaltReason::StaleFeed)), RuntimeSafetyTransition::Halted(RuntimeHaltReason::StaleFeed));
+        assert_eq!(state.apply(Some(RuntimeHaltReason::StaleFeed)), RuntimeSafetyTransition::Unchanged);
+        assert_eq!(state.apply(Some(RuntimeHaltReason::StaleModel)), RuntimeSafetyTransition::HaltReasonChanged { from: RuntimeHaltReason::StaleFeed, to: RuntimeHaltReason::StaleModel });
+        assert_eq!(state.current_halt(), Some(RuntimeHaltReason::StaleModel));
+        assert_eq!(state.apply(None), RuntimeSafetyTransition::Recovered(RuntimeHaltReason::StaleModel));
+        assert_eq!(state.current_halt(), None);
+        assert_eq!(state.apply(None), RuntimeSafetyTransition::Unchanged);
     }
 }
