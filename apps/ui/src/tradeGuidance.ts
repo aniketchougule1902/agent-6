@@ -19,8 +19,12 @@ export function tradeGuidance(snapshot: EngineSnapshot, signal: TradeSignal | nu
   const p = snapshot.last_price!;
   if (![signal.entry_low, signal.entry_high, signal.stop_loss, signal.tp1, signal.tp2].every(v => Number.isFinite(v) && v > 0) || signal.entry_low > signal.entry_high)
     return result("halt", "Do not enter — invalid setup levels", "Wait for a valid new setup.");
-  if (p < signal.entry_low || p > signal.entry_high)
-    return result("wait", "Wait — price is outside the entry zone", "Do not chase the signal. A paper entry requires price inside the displayed zone.");
+  const entryMid = (signal.entry_low + signal.entry_high) / 2;
+  const explicitHalfRange = Math.max(0, (signal.entry_high - signal.entry_low) / 2);
+  const plannedRisk = Math.abs(entryMid - signal.stop_loss);
+  const executionTolerance = Math.max(explicitHalfRange, plannedRisk * 0.15, entryMid * 0.0005);
+  if (Math.abs(p - entryMid) > executionTolerance)
+    return result("wait", "Wait — price moved beyond the execution window", `Paper execution allows a small live tolerance around the recorded entry, but the market has moved ${Math.abs(p-entryMid).toFixed(4)} away. Do not chase.`);
   const d = signal.side === "long" ? 1 : -1;
   if (d * (p - signal.stop_loss) <= 0 || d * (signal.tp1 - p) <= 0 || d * (signal.tp2 - signal.tp1) <= 0)
     return result("halt", "Do not enter — levels already crossed", "The stop or target no longer supports a new entry.");

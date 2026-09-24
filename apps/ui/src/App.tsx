@@ -25,7 +25,6 @@ import { CoinIcon, ServiceBar, SymbolSearch, useCatalog, price } from "./MarketT
 import { MarketSidebar } from "./MarketSidebar";
 import { RiskPlanner } from "./RiskPlanner";
 import { PaperTrading } from "./PaperTrading";
-import { BeginnerGuide } from "./BeginnerGuide";
 import { tradeGuidance } from "./tradeGuidance";
 import { drawSetup } from "./drawSetup";
 import { isOpenSetup, selectSetup } from "./setupSelection";
@@ -347,6 +346,8 @@ function SignalCard({ signal, stale, chartTimeframe }: { signal: TradeSignal | n
   );
 }
 
+function moneyUi(value:number){return `${value.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})}`;}
+
 function Metric({ label, value }: { label: string; value: string }) {
   return (
     <div className="metric">
@@ -359,7 +360,6 @@ function Metric({ label, value }: { label: string; value: string }) {
 function LiveApp() {
   const [snapshot, setSnapshot] = useState<EngineSnapshot | null>(null);
   const [events, setEvents] = useState<EngineEvent[]>([]);
-  const [advanced, setAdvanced] = useState(false);
   const [now, setNow] = useState(Date.now());
   const [receivedAt, setReceivedAt] = useState(0);
   const [priorityEvent, setPriorityEvent] = useState<EngineEvent | null>(null);
@@ -468,7 +468,7 @@ function LiveApp() {
   const statusText = now - receivedAt > 5000 ? "DASHBOARD STALE" : !socketUp || !snapshot.connected ? "RECONNECTING" : snapshot.feed_stale ? "STALE DATA" : !snapshot.features ? "WARMING" : "LIVE";
 
   return (
-    <main className={`app-shell ${advanced ? "advanced-mode" : "beginner-mode"}`}>
+    <main className="app-shell advanced-mode">
       <ServiceBar socketUp={socketUp} alarms={alarms.enabled}/>
       <header>
         <div>
@@ -476,7 +476,7 @@ function LiveApp() {
           <div className="subtitle">LOCAL CRYPTO SCALPING INTELLIGENCE</div>
         </div>
         <div className="header-actions">
-          <button className="button" aria-pressed={advanced} onClick={() => setAdvanced(v => !v)}>{advanced ? "Switch to beginner" : "Advanced view"}</button>
+          <span className="mode-badge">ADVANCED TERMINAL · PAPER EXECUTION</span>
           <div className={`status ${healthy ? "online" : "offline"}`}>
             <span />
             {statusText}
@@ -487,7 +487,10 @@ function LiveApp() {
         </div>
       </header>
 
-      <BeginnerGuide guidance={guidance} signal={displayedSetup} event={priorityEvent} acknowledged={acknowledged} onAcknowledge={() => setAcknowledged(true)}/>
+      {priorityEvent && !acknowledged && <section className="priority-ribbon" role="alert">
+        <div><strong>{priorityEvent.signal?.symbol ?? "MARKET"} · {priorityEvent.event_type.replaceAll("_"," ").toUpperCase()}</strong><span>{priorityEvent.message}</span></div>
+        <button className="button" onClick={() => setAcknowledged(true)}>Acknowledge</button>
+      </section>}
       <div className="workspace"><MarketSidebar busy={marketUpdating} onSelect={symbol=>void updateMarket({symbol,timeframe:"5"})}/><div className="workspace-main">
       <section className="ticker-row">
         <div className="ticker-control">
@@ -527,7 +530,7 @@ function LiveApp() {
         <label>Display setup <select aria-label="Display setup" value={signals.some(s=>s.timeframe===setupFocus)?setupFocus:"auto"} onChange={e=>setSetupFocus(e.target.value)}><option value="auto">Auto: prefer open setup</option>{signals.map(s=><option key={s.id} value={s.timeframe}>{s.timeframe}m {s.side.toUpperCase()} / {s.status.replaceAll('_',' ')}</option>)}</select></label>
         {displayedSetup&&<span className="setup-badge">{displayedSetup.timeframe}m {displayedSetup.side.toUpperCase()} | {isOpenSetup(displayedSetup)?'TRACKING':'COMPLETED'}</span>}
       </section>
-      {advanced && signalHistory.length>0&&<section className="panel event-panel" aria-label="Recent setup lifecycle">
+      {signalHistory.length>0&&<section className="panel event-panel lifecycle-panel" aria-label="Recent setup lifecycle">
         <div className="eyebrow">RECENT SETUP HISTORY</div>
         <div className="events">
           {signalHistory.map(signal=><div className="event" key={`${signal.id}-${signal.last_event_ms}-${signal.status}`}>
@@ -537,7 +540,13 @@ function LiveApp() {
           </div>)}
         </div>
       </section>}
-      <section className="timeframe-board advanced-only" aria-label="All scalping timeframes">
+      <section className="command-deck" aria-label="Advanced market command deck">
+        <div className="command-card"><span>ACTIVE THESIS</span><strong className={displayedSetup?.side === "long" ? "positive" : displayedSetup?.side === "short" ? "negative" : ""}>{displayedSetup ? `${displayedSetup.timeframe}m ${displayedSetup.side.toUpperCase()}` : "NO SETUP"}</strong><small>{displayedSetup ? displayedSetup.status.replaceAll("_"," ").toUpperCase() : "Waiting for admission"}</small></div>
+        <div className={`command-card gate-${guidance.state}`}><span>EXECUTION GATE</span><strong>{guidance.state.toUpperCase()}</strong><small>{guidance.title}</small></div>
+        <div className="command-card"><span>REGIME</span><strong>{f?.regime.replaceAll("_"," ").toUpperCase() ?? "WARMING"}</strong><small>{f ? `Spread ${f.spread_bps.toFixed(2)} bp · Book ${f.orderbook_age_ms} ms` : "Collecting live features"}</small></div>
+        <div className="command-card"><span>PAPER EQUITY</span><strong className={snapshot.paper_equity >= 1000 ? "positive" : "negative"}>${moneyUi(snapshot.paper_equity)}</strong><small>{snapshot.paper_open_count} open · {snapshot.paper_closed_count} closed</small></div>
+      </section>
+      <section className="timeframe-board" aria-label="All scalping timeframes">
         {(["1", "3", "5", "15"] as Timeframe[]).map(tf => {
           const analysis = snapshot.analyses?.find(item => item.timeframe === tf);
           const signal = snapshot.timeframe_signals?.find(item => item.timeframe === tf);
@@ -557,10 +566,10 @@ function LiveApp() {
         </section>
 
         <div className="right-column">
-          {advanced && <SignalCard signal={displayedSetup} stale={!healthy} chartTimeframe={timeframe} />}
-          {advanced && <RiskPlanner signal={displayedSetup} instrument={instrument}/>}
-          <PaperTrading snapshot={snapshot} signal={displayedSetup} entryAllowed={guidance.canEnter} advanced={advanced}/>
-          <details className="feature-details advanced-only"><summary>Order flow & microstructure</summary>
+          <SignalCard signal={displayedSetup} stale={!healthy} chartTimeframe={timeframe} />
+          <PaperTrading snapshot={snapshot} signal={displayedSetup} entryAllowed={guidance.canEnter} entryTitle={guidance.title} entryDetail={guidance.detail}/>
+          <RiskPlanner signal={displayedSetup} instrument={instrument}/>
+          <details className="feature-details"><summary>Order flow & microstructure</summary>
 
           <section className="panel">
             <div className="eyebrow">LIVE FEATURE STACK</div>
@@ -593,7 +602,7 @@ function LiveApp() {
         </div>
       </div>
 
-      <section className="panel event-panel advanced-only">
+      <section className="panel event-panel indicator-panel">
         <div className="eyebrow">{timeframe}m CLOSED-CANDLE INDICATORS</div>
         {a ? <>
           <div className="indicator-grid">
