@@ -22,15 +22,19 @@ Open exposure is measured from each position's immutable entry price times remai
 
 `RiskStateStore` provides an atomic, fsync-backed sidecar bound to the paper account revision. It validates the nested risk snapshot and fails closed on corrupt JSON, unknown schema versions, unsafe/unlatched breached snapshots, or a paper/risk revision mismatch.
 
-The store now also implements a write-ahead `RiskCommitIntent` protocol for the dangerous crash window between the paper-ledger rename and risk-sidecar rename. A caller prepares an intent for exactly `revision N -> N+1` before mutating the paper account. Normal sidecar loads refuse to proceed while an unfinished intent exists. On restart, recovery is deterministic:
+The write-ahead `RiskCommitIntent` protocol covers the dangerous crash window between the paper-ledger rename and risk-sidecar rename. A caller prepares an intent for exactly `revision N -> N+1` before mutating the paper account. Normal sidecar loads refuse to proceed while an unfinished intent exists. On restart, recovery is deterministic:
 
 - account still at N: the account mutation never committed, so the intent is aborted and the prior risk state remains authoritative;
 - account at N+1: the account commit won the race, so recovery completes the prepared risk snapshot at N+1 and removes the intent;
 - account at any other revision: state is ambiguous/corrupt, recovery fails closed and preserves the intent for investigation.
 
-Both the intent and risk snapshot use atomic temporary-file replacement, file fsync, and containing-directory fsync where supported. Tests cover prepared-intent admission blocking, unapplied-intent abort, post-account-commit completion, ambiguous-revision failure with evidence preservation, exact-target enforcement, corruption/schema rejection, revision mismatch, durable latch round-trip, and temp-file cleanup.
+The protocol is now also bound to the *durable source risk state*. Preparing an ordinary mutation requires an existing sidecar at exactly the supplied source revision; missing sidecars and stale/future source revisions fail closed instead of silently creating a transaction from an unverified state. Ordinary mutations must preserve configured limits and session-start equity, cannot move the observation timestamp backwards, cannot lower the remembered equity peak, and cannot clear or replace an already latched halt. This closes a loophole where a stale or buggy caller could otherwise prepare a syntactically valid N -> N+1 intent that discarded safety memory.
 
-The protocol primitive is compiled and validated, but the paper mutation methods still need to call `begin_commit` before their durable ledger write and `finish_commit` after it. Until that final wiring is complete, startup reconstruction from closed-equity history remains the active fallback and cannot recover an intratrade drawdown that breached and fully recovered before a crash without leaving a closed-equity trace.
+Initialization is explicit and single-use. Session reset is also explicit: `begin_session_reset` is the only prepared transition allowed to clear the prior session's peak/latch, and it remains revision-bound and crash-recoverable. Recovery of an unapplied intent revalidates the durable source sidecar before deleting the intent, so corruption is not hidden by cleanup.
+
+Both the intent and risk snapshot use atomic temporary-file replacement, file fsync, and containing-directory fsync where supported. Tests cover exact durable-source binding, missing/stale source rejection, monotonic peak/timestamp/latch rules, explicit reset semantics, prepared-intent admission blocking, unapplied-intent abort, post-account-commit completion, ambiguous-revision failure with evidence preservation, exact-target enforcement, corruption/schema rejection, revision mismatch, durable latch round-trip, and temp-file cleanup.
+
+The protocol primitive is compiled and validated, but the paper mutation methods still need to call `begin_commit` before their durable ledger write and `finish_commit` after it, with startup calling `recover` before admission. Until that final wiring is complete, startup reconstruction from closed-equity history remains the active fallback and cannot recover an intratrade drawdown that breached and fully recovered before a crash without leaving a closed-equity trace.
 
 ## Alerts and next work
 
