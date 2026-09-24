@@ -14,7 +14,7 @@ def main():
    except ValueError:continue
    if e.get('event_type') in ('feed_stale','feed_disconnected'):outages.append(e.get('ts_ms',0))
    s=e.get('signal') or {};sid=s.get('id')
-   if e.get('event_type')=='signal' and 'strategy:a6-live-v2' in s.get('reasons',[]) :
+   if e.get('event_type')=='signal' and 'strategy:a6-live-v3' in s.get('reasons',[]) :
     raw=next((x.split(':',1)[1] for x in s.get('reasons',[]) if x.startswith('raw-quality:')),None)
     if raw is not None:
      try:s['confidence']=float(raw)
@@ -22,7 +22,7 @@ def main():
      if math.isfinite(s['confidence']) and 0<=s['confidence']<=1:starts[sid]=s
    if e.get('event_type') in ('tp2','stop_loss','expired') and sid not in ends:ends[sid]=e
  rows=sorted([(s,ends[k]) for k,s in starts.items() if k in ends and ends[k].get('signal',{}).get('observed_exit_price') is not None and not any(s['created_at_ms']<=t<=ends[k]['ts_ms'] for t in outages)],key=lambda r:r[0]['created_at_ms'])
- status={'state':'collecting','samples':len(rows),'required':500,'updated_ms':int(time.time()*1000),'reason':'Need 500 completed live-v2 signal outcomes; demos and old model scores excluded'}
+ status={'state':'collecting','samples':len(rows),'required':500,'updated_ms':int(time.time()*1000),'reason':'Need 500 completed live-v3 signal outcomes; demos and old model scores excluded'}
  if len(rows)<500:write(OUT,status);print(json.dumps(status));return
  import numpy as np
  from sklearn.linear_model import LogisticRegression
@@ -45,8 +45,8 @@ def main():
  approved=brier<baseline and ece<=.08
  status.update(state='validated' if approved else 'rejected',reason='Independent chronological test passed' if approved else 'Independent test does not beat baseline with ECE <= 0.08',metrics=metrics)
  if approved:
-  payload={'model_version':'live-v2-'+str(int(time.time())),'intercept':float(model.intercept_[0]),'features':[{'name':'quality_score','mean':0.0,'scale':1.0,'weight':float(model.coef_[0,0])}],'calibration':{'method':'platt','a':float(calibrator.coef_[0,0]),'b':float(calibrator.intercept_[0])},'abstention':{'threshold':.5,'min_coverage':0.0,'validation_utility':0.0},'metrics':metrics}
-  raw=json.dumps(payload,sort_keys=True,separators=(',',':'));manifest={'schema_version':1,'model_family':'platt_live_signal_outcome','feature_schema_version':'a6.live.signals.v2','training_data_id':'live-journal:'+hashlib.sha256(journal.read_bytes()).hexdigest(),'code_revision':'a6-live-v2','created_at_ms':int(time.time()*1000),'artifact_sha256':hashlib.sha256(raw.encode()).hexdigest(),'metrics':metrics}
+  payload={'model_version':'live-v3-'+str(int(time.time())),'intercept':float(model.intercept_[0]),'features':[{'name':'quality_score','mean':0.0,'scale':1.0,'weight':float(model.coef_[0,0])}],'calibration':{'method':'platt','a':float(calibrator.coef_[0,0]),'b':float(calibrator.intercept_[0])},'abstention':{'threshold':.5,'min_coverage':0.0,'validation_utility':0.0},'metrics':metrics}
+  raw=json.dumps(payload,sort_keys=True,separators=(',',':'));manifest={'schema_version':1,'model_family':'platt_live_signal_outcome','feature_schema_version':'a6.live.signals.v3','training_data_id':'live-journal:'+hashlib.sha256(journal.read_bytes()).hexdigest(),'code_revision':'a6-live-v3','created_at_ms':int(time.time()*1000),'artifact_sha256':hashlib.sha256(raw.encode()).hexdigest(),'metrics':metrics}
   write(Path(os.environ.get('A6_MODEL_PATH',ROOT/'data'/'calibrated_model.json')),{'manifest':manifest,'model_raw':raw,'model':payload})
  write(OUT,status);print(json.dumps(status))
 if __name__=='__main__':main()

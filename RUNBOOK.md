@@ -62,6 +62,10 @@ The active list shows only fresh candidates with no scan blockers and composite 
 
 The chart supports 1m/3m/5m/15m. Only the selected market receives the full live order-book/trade-flow signal pipeline. Existing paper positions have independent quote monitoring.
 
+Signal admission v3 is deliberately stricter than the radar score. Breakouts must close with sufficient ATR-normalized channel clearance, a strong candle body, a close near the directional edge of the candle, and no exhaustion-sized range. After the candle closes, the live price must continue to hold the breakout/pullback structure while 1m momentum, companion-timeframe trend/momentum, spread, and an eight-component microstructure ensemble remain aligned. All hard gates must stay valid continuously for `A6_SIGNAL_CONFIRM_MS` (default 6000 ms) before a paper signal is admitted; any hard-gate failure resets the arming timer. `A6_MIN_LIVE_EDGE` controls the required directional microstructure edge. This is designed to reject immediate post-breakout fakeouts; it does not make losses impossible.
+
+The v3 quality formula is continuous rather than awarding near-full credit for binary MACD/setup checks. v2 calibrated artifacts are intentionally rejected because the score distribution and admission policy changed. Calibration restarts using only completed `strategy:a6-live-v3` outcomes, so a percentage shown as raw quality remains a setup/admission score until a new independently validated v3 calibration artifact exists.
+
 ## Data, security and recovery
 
 Paper state: `data/paper-account.json`; reset archives: `data/paper-account-archive-*.json`. Back up while stopped. Persistence failure rejects mutations. Corrupt account JSON prevents startup instead of silently resetting money.
