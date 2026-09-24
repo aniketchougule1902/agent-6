@@ -90,9 +90,9 @@ Each hour begins with the highest-impact incomplete checkpoint. Failed tests tak
 
 - [x] Polars training dataset builder
 - [x] regime labels
-- [ ] multi-timeframe features
+- [x] multi-timeframe features
 - [x] microstructure features
-- [ ] derivatives features
+- [x] derivatives features
 - [x] no-lookahead validation checks
 - [x] feature-schema versioning
 
