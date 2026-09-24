@@ -14,6 +14,7 @@ class ReplayEvaluationSummary:
     source_sha256: str
     completed_round_trips: int
     signal_events: int
+    unresolved_signal_events: int
     skipped_no_book: int
     skipped_stale_book: int
     skipped_unfilled: int
@@ -141,16 +142,21 @@ def evaluate_replay_report_bytes(raw: bytes) -> ReplayEvaluationSummary:
         peak = max(peak, equity)
         max_drawdown = max(max_drawdown, peak - equity)
 
-    attempted = completed + skipped_no_book + skipped_stale + skipped_unfilled
-    coverage = completed / attempted if attempted else 0.0
-    if attempted > signals:
-        raise ValueError("fill attempts exceed emitted signal count")
+    accounted = completed + skipped_no_book + skipped_stale + skipped_unfilled
+    if accounted > signals:
+        raise ValueError("completed/skipped signal outcomes exceed emitted signal count")
+    unresolved = signals - accounted
+    # Coverage is intentionally measured against every emitted signal, not only
+    # signals that reached a fill attempt. This prevents a truncated recording or
+    # still-open lifecycle from reporting misleading 100% evaluation coverage.
+    coverage = completed / signals if signals else 0.0
 
     return ReplayEvaluationSummary(
-        schema_version="agent6-replay-evaluation-v1",
+        schema_version="agent6-replay-evaluation-v2",
         source_sha256=source_sha256,
         completed_round_trips=completed,
         signal_events=signals,
+        unresolved_signal_events=unresolved,
         skipped_no_book=skipped_no_book,
         skipped_stale_book=skipped_stale,
         skipped_unfilled=skipped_unfilled,
