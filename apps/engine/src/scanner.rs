@@ -12,6 +12,9 @@ pub struct ScanRow {
     pub symbol: String,
     pub price: f64,
     pub turnover24h: f64,
+    /// 1-based position inside this scan cycle's 200-market liquidity universe.
+    /// This is deliberately separate from setup-quality rank.
+    pub universe_rank: usize,
     pub change24h: f64,
     pub checked_ms: u64,
     pub quality: f64,
@@ -171,6 +174,7 @@ pub async fn run(state: AppState) {
                                 symbol: symbol.into(),
                                 price: last,
                                 turnover24h: num("turnover24h"),
+                                universe_rank: 0,
                                 change24h: num("price24hPcnt") * 100.0,
                                 checked_ms: 0,
                                 quality: 0.0,
@@ -189,8 +193,13 @@ pub async fn run(state: AppState) {
                         ));
                     }
                 }
+                // Turnover chooses the broad liquid universe only. It must never decide
+                // the displayed setup order; the UI ranks all qualified members by quality.
                 rows.sort_by(|a, b| b.0.turnover24h.total_cmp(&a.0.turnover24h));
                 rows.truncate(UNIVERSE_SIZE);
+                for (index, (row, _, _)) in rows.iter_mut().enumerate() {
+                    row.universe_rank = index + 1;
+                }
                 {
                     let mut s = store().write();
                     let old = s.rows.clone();
@@ -200,6 +209,7 @@ pub async fn run(state: AppState) {
                             if let Some(prev) = old.iter().find(|p| p.symbol == r.symbol) {
                                 let mut kept = prev.clone();
                                 kept.turnover24h = r.turnover24h;
+                                kept.universe_rank = r.universe_rank;
                                 kept.price = r.price;
                                 kept.change24h = r.change24h;
                                 kept

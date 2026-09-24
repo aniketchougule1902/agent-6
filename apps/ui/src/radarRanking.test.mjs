@@ -5,11 +5,13 @@ import ts from 'typescript';
 const source = ts.transpileModule(readFileSync(new URL('./radarRanking.ts', import.meta.url), 'utf8'), { compilerOptions: { module: ts.ModuleKind.ESNext } }).outputText;
 const { rankedCandidates } = await import(`data:text/javascript;base64,${Buffer.from(source).toString('base64')}`);
 const now = 1_000_000;
-const row = (symbol, quality, extra={}) => ({symbol, quality, checked_ms:now, phase:'candidate: confirm live flow', blockers:[], ...extra});
+const row = (symbol, quality, extra={}) => ({symbol, quality, universe_rank:0, checked_ms:now, phase:'candidate: confirm live flow', blockers:[], ...extra});
 test('ranks any qualifying member of 200 by quality, including inclusive boundaries', () => {
-  const rows = Array.from({length:200}, (_,i)=>row(`COIN${i}`,0.89));
-  rows[199]=row('LAST',1); rows[120]=row('MID',0.95); rows[0]=row('FIRST',0.90);
-  assert.deepEqual(rankedCandidates(rows,now).map(r=>r.symbol),['LAST','MID','FIRST']);
+  const rows = Array.from({length:200}, (_,i)=>row(`COIN${i}`,0.89,{universe_rank:i+1}));
+  rows[199]=row('LAST',1,{universe_rank:200}); rows[120]=row('MID',0.95,{universe_rank:121}); rows[0]=row('FIRST',0.90,{universe_rank:1});
+  const ranked=rankedCandidates(rows,now);
+  assert.deepEqual(ranked.map(r=>r.symbol),['LAST','MID','FIRST']);
+  assert.deepEqual(ranked.map(r=>r.universe_rank),[200,121,1]);
   assert.equal(rows[0].symbol,'FIRST');
 });
 test('excludes blocked, stale, future, unavailable and malformed scores', () => {
