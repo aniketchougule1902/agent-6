@@ -33,7 +33,8 @@ impl RuntimeSafetyState {
     /// spam alarms; recovery always identifies the reason that was cleared.
     pub fn apply(&mut self, next: Option<RuntimeHaltReason>) -> RuntimeSafetyTransition {
         let transition = match (self.current_halt, next) {
-            (None, None) | (Some(_), Some(_)) if self.current_halt == next => RuntimeSafetyTransition::Unchanged,
+            (None, None) => RuntimeSafetyTransition::Unchanged,
+            (Some(current), Some(next)) if current == next => RuntimeSafetyTransition::Unchanged,
             (None, Some(reason)) => RuntimeSafetyTransition::Halted(reason),
             (Some(from), Some(to)) => RuntimeSafetyTransition::HaltReasonChanged { from, to },
             (Some(reason), None) => RuntimeSafetyTransition::Recovered(reason),
