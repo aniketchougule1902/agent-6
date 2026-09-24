@@ -63,10 +63,13 @@ def test_inconsistent_reports_fail_closed(mutation):
         evaluate_replay_report_bytes(raw(report))
 
 
-def test_future_ordering_and_nonfinite_values_fail_closed():
+def test_timestamp_and_nonfinite_values_fail_closed():
+    # This mutation violates the stronger per-round-trip invariant first:
+    # b closes before its own open timestamp. Assert that exact safety check
+    # instead of coupling the test to a later cross-trip ordering check.
     report = fixture()
     report["round_trips"][1]["closed_at_ms"] = 150
-    with pytest.raises(ValueError, match="ordered"):
+    with pytest.raises(ValueError, match="closes before it opens"):
         evaluate_replay_report_bytes(raw(report))
 
     report = fixture()
