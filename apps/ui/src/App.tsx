@@ -106,6 +106,11 @@ function Chart({ snapshot, timeframe, tickSize }: { snapshot: EngineSnapshot; ti
   const [showBands, setShowBands] = useState(false);
   const [showVwap, setShowVwap] = useState(true);
   const [allFlags, setAllFlags] = useState(false);
+  const [showAutoTrendlines,setShowAutoTrendlines]=useState(true);
+  const [showSupportResistance,setShowSupportResistance]=useState(true);
+  const [showPatterns,setShowPatterns]=useState(true);
+  const [showExpectedPath,setShowExpectedPath]=useState(true);
+  const [showSwingPivots,setShowSwingPivots]=useState(false);
 
   const candles = useMemo(() => {
     if (timeframe === "1") return snapshot.candles_1m;
@@ -163,12 +168,12 @@ function Chart({ snapshot, timeframe, tickSize }: { snapshot: EngineSnapshot; ti
       if(now-lastDraw>32){
         lastDraw=now;const rect=hostRef.current!.getBoundingClientRect();const dpr=window.devicePixelRatio||1;
         if(canvas.width!==Math.round(rect.width*dpr)||canvas.height!==Math.round(rect.height*dpr)){canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);}
-        const ctx=canvas.getContext('2d');if(ctx){ctx.setTransform(dpr,0,0,dpr,0,0);drawSetup(ctx,chart,series,candles,indicatorData,snapshot.active_signal,showRibbon,showZones,rect.width,rect.height);}
+        const ctx=canvas.getContext('2d');if(ctx){ctx.setTransform(dpr,0,0,dpr,0,0);drawSetup(ctx,chart,series,candles,indicatorData,snapshot.active_signal,showRibbon,showZones,rect.width,rect.height,{trendlines:showAutoTrendlines,supportResistance:showSupportResistance,patterns:showPatterns,expectedPath:showExpectedPath,pivots:showSwingPivots});}
       }
       frame=requestAnimationFrame(draw);
     };
     frame=requestAnimationFrame(draw);return()=>cancelAnimationFrame(frame);
-  },[candles,indicatorData,snapshot.active_signal,showRibbon,showZones]);
+  },[candles,indicatorData,snapshot.active_signal,showRibbon,showZones,showAutoTrendlines,showSupportResistance,showPatterns,showExpectedPath,showSwingPivots]);
 
   useEffect(() => {
     const series = seriesRef.current;
@@ -196,7 +201,7 @@ function Chart({ snapshot, timeframe, tickSize }: { snapshot: EngineSnapshot; ti
     volumeRef.current?.setData(candles.map(c => ({time:Math.floor(c.start_ms/1000) as UTCTimestamp,value:c.volume,color:c.close>=c.open?"#237c62":"#8c3547"})));
     const marketKey = `${snapshot.symbol}:${timeframe}`;
     if (candles.length && (chartMarket.current !== marketKey || (priorCandleCount.current<60&&candles.length>=60))) {
-      chartRef.current?.timeScale().setVisibleLogicalRange({from:Math.max(0,candles.length-90),to:candles.length+6});
+      chartRef.current?.timeScale().setVisibleLogicalRange({from:Math.max(0,candles.length-90),to:candles.length+10});
       chartMarket.current=marketKey;
     }
     priorCandleCount.current=candles.length;
@@ -293,9 +298,15 @@ function Chart({ snapshot, timeframe, tickSize }: { snapshot: EngineSnapshot; ti
       <label><input type="checkbox" checked={showVwap} onChange={e=>setShowVwap(e.target.checked)}/> VWAP 20</label>
       <label><input type="checkbox" checked={showBands} onChange={e=>setShowBands(e.target.checked)}/> Bollinger 20, 2</label>
       <label><input type="checkbox" checked={allFlags} onChange={e=>setAllFlags(e.target.checked)}/> All timeframe flags</label>
+      <span className="chart-control-divider" aria-hidden="true"/>
+      <label className="structure-control"><input type="checkbox" checked={showAutoTrendlines} onChange={e=>setShowAutoTrendlines(e.target.checked)}/> Auto trendlines</label>
+      <label className="structure-control"><input type="checkbox" checked={showSupportResistance} onChange={e=>setShowSupportResistance(e.target.checked)}/> S/R zones</label>
+      <label className="structure-control"><input type="checkbox" checked={showPatterns} onChange={e=>setShowPatterns(e.target.checked)}/> Wedges / patterns</label>
+      <label className="structure-control"><input type="checkbox" checked={showExpectedPath} onChange={e=>setShowExpectedPath(e.target.checked)}/> Expected path</label>
+      <label className="structure-control"><input type="checkbox" checked={showSwingPivots} onChange={e=>setShowSwingPivots(e.target.checked)}/> Swing pivots</label>
     </div>
     <div className="chart-stage"><div className="chart" ref={hostRef}/><canvas ref={drawingRef} className="setup-canvas" aria-hidden="true"/><div className="chart-watermark">AGENT / 6 <small>{snapshot.symbol} ? {timeframe}m ? PAPER</small></div></div>
-    <div className="muted chart-legend">Yellow arrows: paper entries · Green flags: target touches · Red flags: stop touches. Overlays update live; decisions use closed candles.</div>
+    <div className="muted chart-legend chart-intelligence-legend"><span>Yellow arrows: paper entries · Green flags: targets · Red flags: stops.</span><span>Auto structure uses confirmed swing pivots only. Dotted expected path is a scenario projection, not a guaranteed forecast.</span></div>
     <button className="button chart-download" onClick={downloadDrawing}>
       Export chart PNG
     </button>
