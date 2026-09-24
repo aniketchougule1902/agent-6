@@ -47,6 +47,8 @@ class ChampionRegistry:
 
     This registry never trains models and never changes live weights. Callers must
     supply immutable artifact manifests plus reproducible evaluation reports.
+    Before any promotion/rollback, the current artifact and audit/pointer linkage
+    are revalidated so a missing/tampered champion cannot be silently replaced.
     """
 
     def __init__(self, root: str | Path) -> None:
@@ -61,10 +63,34 @@ class ChampionRegistry:
         pointer = ChampionPointer(**raw)
         if pointer.schema_version != 1:
             raise ValueError("unsupported champion pointer schema")
+        if pointer.promoted_at_ms < 0 or len(pointer.manifest_sha256) != 64 or len(pointer.artifact_sha256) != 64:
+            raise ValueError("invalid champion pointer")
+        return pointer
+
+    def current_verified(self) -> ChampionPointer | None:
+        """Return the champion only when pointer, artifact and audit agree."""
+        pointer = self.current()
+        if pointer is None:
+            if self.audit_path.exists() and self.audit_path.read_text().strip():
+                raise ValueError("promotion audit exists without champion pointer")
+            return None
+        artifact = Path(pointer.artifact_path)
+        if not artifact.is_file():
+            raise ValueError("champion artifact is missing")
+        if sha256(artifact.read_bytes()).hexdigest() != pointer.artifact_sha256:
+            raise ValueError("champion artifact hash mismatch")
+        rows = self._audit_rows()
+        if not rows:
+            raise ValueError("champion pointer exists without promotion audit")
+        last = rows[-1]
+        if last.get("resulting_champion_manifest_sha256") != pointer.manifest_sha256:
+            raise ValueError("champion pointer does not match promotion audit")
+        if last.get("at_ms") != pointer.promoted_at_ms:
+            raise ValueError("champion pointer timestamp does not match promotion audit")
         return pointer
 
     def bootstrap(self, manifest: ModelArtifactManifest, artifact_path: str | Path, at_ms: int) -> PromotionAuditRecord:
-        if self.current() is not None:
+        if self.current_verified() is not None:
             raise ValueError("champion already exists")
         self._validate_candidate(manifest, artifact_path, at_ms)
         pointer = self._pointer(manifest, artifact_path, at_ms)
@@ -76,9 +102,11 @@ class ChampionRegistry:
     def evaluate_and_promote(self, *, candidate_manifest: ModelArtifactManifest, candidate_path: str | Path,
                              candidate_report: EvaluationReport, champion_report: EvaluationReport,
                              policy: PromotionPolicy, at_ms: int) -> PromotionAuditRecord:
-        current = self.current()
+        current = self.current_verified()
         if current is None:
             raise ValueError("bootstrap a champion before evaluating challengers")
+        if at_ms <= current.promoted_at_ms:
+            raise ValueError("promotion decision timestamp must advance monotonically")
         self._validate_candidate(candidate_manifest, candidate_path, at_ms)
         accepted, reasons = policy.accepts(candidate_report, champion_report)
         resulting = current.manifest_sha256
@@ -97,18 +125,59 @@ class ChampionRegistry:
 
     def rollback(self, *, manifest: ModelArtifactManifest, artifact_path: str | Path, at_ms: int,
                  reason: str) -> PromotionAuditRecord:
-        current = self.current()
+        current = self.current_verified()
         if current is None:
             raise ValueError("no champion to roll back")
+        if at_ms <= current.promoted_at_ms:
+            raise ValueError("rollback timestamp must advance monotonically")
         if not reason.strip():
             raise ValueError("rollback reason must be non-empty")
         self._validate_candidate(manifest, artifact_path, at_ms)
+        target = manifest.manifest_sha256()
+        prior_champions = {
+            row.get("resulting_champion_manifest_sha256")
+            for row in self._audit_rows()
+            if row.get("accepted") is True
+        }
+        if target not in prior_champions:
+            raise ValueError("rollback target was never an audited champion")
         pointer = self._pointer(manifest, artifact_path, at_ms)
-        record = PromotionAuditRecord(1, "rollback", at_ms, manifest.manifest_sha256(),
+        record = PromotionAuditRecord(1, "rollback", at_ms, target,
                                       current.manifest_sha256, pointer.manifest_sha256, True,
                                       (reason.strip(),), None, None)
         self._commit(pointer, record)
         return record
+
+    def _audit_rows(self) -> list[dict]:
+        if not self.audit_path.exists():
+            return []
+        rows: list[dict] = []
+        previous_at = -1
+        expected_champion: str | None = None
+        for line_no, line in enumerate(self.audit_path.read_text().splitlines(), 1):
+            if not line.strip():
+                raise ValueError(f"blank promotion audit row at line {line_no}")
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"corrupt promotion audit row at line {line_no}") from exc
+            if row.get("schema_version") != 1 or row.get("action") not in {"bootstrap", "promote", "reject", "rollback"}:
+                raise ValueError(f"invalid promotion audit row at line {line_no}")
+            at_ms = row.get("at_ms")
+            if not isinstance(at_ms, int) or at_ms <= previous_at:
+                raise ValueError("promotion audit timestamps must be strictly increasing")
+            prior = row.get("prior_champion_manifest_sha256")
+            if rows and prior != expected_champion:
+                raise ValueError("promotion audit champion chain is broken")
+            if not rows and row.get("action") != "bootstrap":
+                raise ValueError("promotion audit must begin with bootstrap")
+            resulting = row.get("resulting_champion_manifest_sha256")
+            if not isinstance(resulting, str) or len(resulting) != 64:
+                raise ValueError("promotion audit has invalid resulting champion")
+            expected_champion = resulting
+            previous_at = at_ms
+            rows.append(row)
+        return rows
 
     def _validate_candidate(self, manifest: ModelArtifactManifest, artifact_path: str | Path, at_ms: int) -> None:
         if at_ms < 0:
@@ -125,8 +194,6 @@ class ChampionRegistry:
 
     def _commit(self, pointer: ChampionPointer | None, record: PromotionAuditRecord) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
-        # Audit is append-only. fsync before pointer replacement so a champion can
-        # never appear without a durable decision record.
         with self.audit_path.open("a", encoding="utf-8") as handle:
             handle.write(record.canonical_json() + "\n")
             handle.flush()
