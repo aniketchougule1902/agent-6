@@ -82,11 +82,11 @@ class ChampionRegistry:
         rows = self._audit_rows()
         if not rows:
             raise ValueError("champion pointer exists without promotion audit")
-        last = rows[-1]
-        if last.get("resulting_champion_manifest_sha256") != pointer.manifest_sha256:
+        if rows[-1].get("resulting_champion_manifest_sha256") != pointer.manifest_sha256:
             raise ValueError("champion pointer does not match promotion audit")
-        if last.get("at_ms") != pointer.promoted_at_ms:
-            raise ValueError("champion pointer timestamp does not match promotion audit")
+        accepted_rows = [row for row in rows if row.get("accepted") is True]
+        if not accepted_rows or accepted_rows[-1].get("at_ms") != pointer.promoted_at_ms:
+            raise ValueError("champion pointer timestamp does not match accepted promotion audit")
         return pointer
 
     def bootstrap(self, manifest: ModelArtifactManifest, artifact_path: str | Path, at_ms: int) -> PromotionAuditRecord:
@@ -105,7 +105,8 @@ class ChampionRegistry:
         current = self.current_verified()
         if current is None:
             raise ValueError("bootstrap a champion before evaluating challengers")
-        if at_ms <= current.promoted_at_ms:
+        rows = self._audit_rows()
+        if rows and at_ms <= rows[-1]["at_ms"]:
             raise ValueError("promotion decision timestamp must advance monotonically")
         self._validate_candidate(candidate_manifest, candidate_path, at_ms)
         accepted, reasons = policy.accepts(candidate_report, champion_report)
@@ -128,7 +129,8 @@ class ChampionRegistry:
         current = self.current_verified()
         if current is None:
             raise ValueError("no champion to roll back")
-        if at_ms <= current.promoted_at_ms:
+        rows = self._audit_rows()
+        if rows and at_ms <= rows[-1]["at_ms"]:
             raise ValueError("rollback timestamp must advance monotonically")
         if not reason.strip():
             raise ValueError("rollback reason must be non-empty")
@@ -136,7 +138,7 @@ class ChampionRegistry:
         target = manifest.manifest_sha256()
         prior_champions = {
             row.get("resulting_champion_manifest_sha256")
-            for row in self._audit_rows()
+            for row in rows
             if row.get("accepted") is True
         }
         if target not in prior_champions:
