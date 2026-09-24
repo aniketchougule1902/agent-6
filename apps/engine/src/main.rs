@@ -14,6 +14,7 @@ mod market_event;
 mod microstructure;
 mod multi_venue;
 mod venue_context;
+mod venue_health;
 mod outcomes;
 mod replay;
 mod replay_pipeline;
