@@ -103,7 +103,7 @@ pub(crate) fn evaluate_internal(
                     let hold=direction*(features.last_price-breakout_level)/analysis.atr14;
                     if hold<0.04 {analysis.blockers.push("Breakout level was not held after the close".into());}
                     if hold>1.00 {analysis.blockers.push("Breakout entry is overextended from the channel".into());}
-                } else if analysis.setup=="trend_pullback" && direction*(features.last_price-analysis.ema21)<-0.10*analysis.atr14 {
+                } else if analysis.setup=="trend_pullback" && direction*(features.last_price-analysis.ema21) < -0.10*analysis.atr14 {
                     analysis.blockers.push("Pullback lost EMA21 before entry".into());
                 }
                 if analysis.quality < config.min_signal_score {analysis.blockers.push("Quality below configured threshold".into());}
